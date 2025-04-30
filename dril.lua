@@ -1,5 +1,18 @@
 repeat wait() until game:IsLoaded()
 
+local CoreGui = game:GetService("CoreGui")
+local HUI = CoreGui:FindFirstChild("HUI")
+if HUI then
+	local existingGui = HUI:FindFirstChildOfClass("ScreenGui")
+	if existingGui then existingGui:Destroy() end
+end
+
+for _, gui in ipairs(CoreGui:GetChildren()) do
+	if gui.Name == "FPSPingDisplay" or gui.Name == "ImageButtonGUI" then
+		gui:Destroy()
+	end
+end
+
 local MacLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/thaemmayanh/thaem/refs/heads/main/lib"))()
 
 local Window = MacLib:Window({
