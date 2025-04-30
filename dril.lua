@@ -17,8 +17,11 @@ local MacLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/thaemm
 
 local Window = MacLib:Window({
     Title = "Dril",
-    Size = UDim2.fromOffset(500, 400),
-    Keybind = Enum.KeyCode.RightControl
+    Subtitle = "Phiên bản mờ trong suốt",
+    Size = UDim2.fromOffset(650, 400),
+    Keybind = Enum.KeyCode.RightControl,
+    AcrylicBlur = true, -- bật hiệu ứng trong suốt
+    Scale = 1,
 })
 
 local MainTabGroup = Window:TabGroup()
