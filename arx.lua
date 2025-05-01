@@ -1,4 +1,3 @@
-
 repeat task.wait() until game:IsLoaded()
 
 -- 🧼 Xoá GUI cũ nếu tồn tại
