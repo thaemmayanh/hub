@@ -28,6 +28,7 @@ local defaultSettings = {
     autoLeave = false,
     webhookURL = "",
     webhookEnabled = false,
+    playAfterUpgrade = false,
     slots = {
         place = {true, true, true, true, true, true},
         upgrade = {0, 0, 0, 0, 0, 0}
@@ -278,6 +279,8 @@ local function waitForGameEndToDisappear()
 	return true
 end
 
+local isUpgrading = false
+
 function upgradeUnits()
 	if isUpgrading then return end
 	isUpgrading = true
@@ -295,7 +298,7 @@ function upgradeUnits()
 	local paused = waitForGameEndToDisappear()
 	if paused then
 		-- ✅ Đợi 2s rồi tiếp tục chạy upgrade lại
-		task.wait(2)
+		task.wait(1)
 	end
 
 	while true do
@@ -320,82 +323,142 @@ function upgradeUnits()
 end
 
 --send 
-local function sendRewardWebhook()
-	-- 🟢 Hàm gửi ngay nếu có RewardsShow
-	local function sendNow()
-		local rewardsFolder = LocalPlayer:FindFirstChild("RewardsShow")
-		if not rewardsFolder then return end
+local Players     = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local LocalPlayer = Players.LocalPlayer
 
-		local fields = {}
-		for _, rewardFolder in pairs(rewardsFolder:GetChildren()) do
-			if rewardFolder:IsA("Folder") then
-				local name = rewardFolder.Name
-				local amountObj = rewardFolder:FindFirstChild("Amount")
-				local amount = (amountObj and amountObj.Value) or 0
+-- Hàm thu thập dữ liệu từ UI
+local function collectData()
+    local data = {}
 
-				table.insert(fields, {
-					name = name,
-					value = "+" .. tostring(amount),
-					inline = false
-				})
-			end
-		end
+    -- ⚙ Level & XP
+    local expBar = LocalPlayer.PlayerGui:WaitForChild("HUD"):FindFirstChild("ExpBar")
+    if expBar and expBar:FindFirstChild("Numbers") then
+        local raw = expBar.Numbers.Text
+        local lvl = raw:match("Level%s*(%d+)") or "0"
+        local xp  = raw:match("%[(.-)%]</font>") or "0/0"
+        data.levelText = "Level " .. lvl .. " [" .. xp .. "]"
+    else
+        data.levelText = "Level 0 [0/0]"
+    end
 
-		local payload = {
-			embeds = {{
-				title = "Pịa HUB",
-				color = 0x00FF00,
-				fields = fields,
-				footer = {
-					text = "Sent at " .. os.date("%Y-%m-%d %H:%M:%S")
-				}
-			}}
-		}
+    -- 💰 Gems / Gold / Egg
+    local menu = LocalPlayer.PlayerGui:FindFirstChild("HUD")
+                 and LocalPlayer.PlayerGui.HUD:FindFirstChild("MenuFrame")
+                 and LocalPlayer.PlayerGui.HUD.MenuFrame:FindFirstChild("LeftSide")
+                 and LocalPlayer.PlayerGui.HUD.MenuFrame.LeftSide:FindFirstChild("Frame")
+    data.gems = (menu and menu:FindFirstChild("Gems")
+                 and menu.Gems:FindFirstChildWhichIsA("TextLabel").Text) or "0"
+    data.gold = (menu and menu:FindFirstChild("Gold")
+                 and menu.Gold:FindFirstChildWhichIsA("TextLabel").Text) or "0"
+    data.egg  = (menu and menu:FindFirstChild("Egg")
+                 and menu.Egg:FindFirstChildWhichIsA("TextLabel").Text) or "0"
 
-		local success, err = pcall(function()
-			local requestFunc = (syn and syn.request)
-				or (http and http.request)
-				or (http_request)
-				or (request)
+    -- 🎯 Match Info
+    data.matchInfo = {}
+    local leftSide = LocalPlayer.PlayerGui:FindFirstChild("RewardsUI")
+                   and LocalPlayer.PlayerGui.RewardsUI:FindFirstChild("Main")
+                   and LocalPlayer.PlayerGui.RewardsUI.Main:FindFirstChild("LeftSide")
+    if leftSide then
+        for _, key in ipairs({"GameStatus","Chapter","Difficulty","Mode","World","TotalTime"}) do
+            local lbl = leftSide:FindFirstChild(key)
+            data.matchInfo[key] = (lbl and lbl:IsA("TextLabel") and lbl.Text) or ""
+        end
+    end
 
-			if requestFunc then
-				requestFunc({
-					Url = settings.webhookURL,
-					Method = "POST",
-					Headers = {
-						["Content-Type"] = "application/json"
-					},
-					Body = game:GetService("HttpService"):JSONEncode(payload)
-				})
-			else
-				warn("❌ Không tìm thấy hàm HTTP request phù hợp.")
-			end
-		end)
+    -- 🎁 Rewards list
+    data.rewardsList = {}
+    local rewardsRoot = LocalPlayer:FindFirstChild("RewardsShow")
+    if rewardsRoot then
+        for _, folder in ipairs(rewardsRoot:GetChildren()) do
+            if folder:IsA("Folder") then
+                local amt = (folder:FindFirstChild("Amount") and folder.Amount.Value) or 0
+                table.insert(data.rewardsList, "+" .. amt .. " " .. folder.Name)
+            end
+        end
+    end
 
-		if not success then
-			warn("❌ Gửi webhook thất bại:", err)
-		end
-	end
-
-	-- 🟡 Nếu gọi trực tiếp (nút test) → gửi luôn
-	sendNow()
-
-	-- 🟢 Nếu bật chế độ tự động → đợi end game và gửi
-	task.spawn(function()
-		local playerGui = LocalPlayer:WaitForChild("PlayerGui")
-
-		while true do
-			if settings.webhookEnabled and playerGui:FindFirstChild("GameEndedAnimationUI") then
-				repeat task.wait(0.5) until not playerGui:FindFirstChild("GameEndedAnimationUI")
-				task.wait(1.5)
-				if LocalPlayer:FindFirstChild("RewardsShow") then
-					sendNow()
-				end
-			end
-			task.wait(1)
-		end
-	end)
+    return data
 end
+
+-- Hàm gửi webhook lên Discord
+local function sendWebhook()
+    local d = collectData()
+
+    -- Chọn màu theo GameStatus
+    local status = (d.matchInfo.GameStatus or ""):lower()
+    local color = 0xffff00
+    if status:find("won") then
+        color = 0x00ff00
+    elseif status:find("defect") then
+        color = 0xff0000
+    end
+
+    -- Chuẩn bị fields
+    local fields = {
+        {
+            name   = "Stats",
+            value  = string.format("%s\nGems: %s\nGold: %s\nEgg: %s",
+                       d.levelText, d.gems, d.gold, d.egg),
+            inline = false
+        },
+        {
+            name   = "Rewards",
+            value  = #d.rewardsList > 0 and table.concat(d.rewardsList, "\n") or "Không có",
+            inline = true
+        },
+        {
+            name   = "Match Info",
+            value  = table.concat({
+                       d.matchInfo.GameStatus,
+                       d.matchInfo.Chapter,
+                       d.matchInfo.Difficulty,
+                       d.matchInfo.Mode,
+                       d.matchInfo.World,
+                       d.matchInfo.TotalTime
+                   }, "\n"),
+            inline = false
+        },
+    }
+
+    -- Payload JSON
+    local payload = {
+        embeds = {{
+            title     = "Anime Rangers X",
+            color     = color,
+            fields    = fields,
+            thumbnail = { url = "https://i.imgur.com/CK7zYZy.jpeg" },
+            footer    = { text = "Sent at " .. os.date("%Y-%m-%d %H:%M:%S") },
+        }}
+    }
+
+    -- Gửi request
+    local success, err = pcall(function()
+        local req = (syn and syn.request)
+                 or (http and http.request)
+                 or http_request
+                 or request
+        if not req then error("Không có hàm HTTP request") end
+        req({
+            Url     = settings.webhookURL,
+            Method  = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body    = HttpService:JSONEncode(payload),
+        })
+    end)
+
+    if not success then
+        warn("❌ Gửi webhook thất bại:", err)
+    end
+end
+
+-- Luôn lắng nghe, mỗi lần GameEndedAnimationUI thêm vào thì chờ 2s và gửi
+LocalPlayer.PlayerGui.ChildAdded:Connect(function(gui)
+    if gui.Name == "GameEndedAnimationUI" then
+        task.wait(2)  -- đợi 2 giây để UI cập nhật xong
+        sendWebhook()
+    end
+end)
 
 --// Create Window
 local Window = MacLib:Window({
@@ -462,7 +525,31 @@ leftSection:Toggle({
         if val then
             getEquippedUnits()
             task.spawn(function()
+                local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+
                 while settings.autoPlay do
+                    local isPreGame = playerGui:FindFirstChild("HUD") and playerGui.HUD:FindFirstChild("UnitSelectBeforeGameRunning_UI")
+                    local isEndGame = playerGui:FindFirstChild("GameEndedAnimationUI")
+
+                    -- Nếu đang ở màn chọn tướng hoặc vừa kết thúc game thì tạm dừng auto play
+                    if isPreGame or isEndGame then
+                        repeat
+                            task.wait(0.5)
+                            isPreGame = playerGui:FindFirstChild("HUD") and playerGui.HUD:FindFirstChild("UnitSelectBeforeGameRunning_UI")
+                            isEndGame = playerGui:FindFirstChild("GameEndedAnimationUI")
+                        until not isPreGame and not isEndGame
+
+                        -- Đợi 1.5s để game ổn định
+                        task.wait(1.5)
+                    end
+
+                    -- Nếu bật Play After Upgrade → đợi upgrade xong
+                    if settings.playAfterUpgrade and settings.autoUpgrade then
+                        while isUpgrading do
+                            task.wait(0.5)
+                        end
+                    end
+
                     deployUnits()
                     task.wait(1)
                 end
@@ -486,6 +573,15 @@ leftSection:Toggle({
                 end
             end)
         end
+    end
+})
+
+leftSection:Toggle({
+    Name = "Play After Upgrade",
+    Default = settings.playAfterUpgrade,
+    Callback = function(val)
+        settings.playAfterUpgrade = val
+        saveSettings(settings)
     end
 })
 
