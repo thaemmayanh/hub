@@ -464,7 +464,7 @@ end)
 local Window = MacLib:Window({
     Title = "Pịa Hub",
     Subtitle = "Vãi Pịa",
-    Size = UDim2.fromOffset(700, 450),
+    Size = UDim2.fromOffset(650, 400),
     Keybind = Enum.KeyCode.RightControl,
     AcrylicBlur = true,
 })
