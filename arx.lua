@@ -446,14 +446,22 @@ local function collectData()
         end
     end
 
-    -- 🎁 Rewards list
+    -- 🎁 Rewards list with total
     data.rewardsList = {}
     local rewardsRoot = LocalPlayer:FindFirstChild("RewardsShow")
-    if rewardsRoot then
+    local itemsFolder = game:GetService("ReplicatedStorage"):FindFirstChild("Player_Data")
+                        and game.ReplicatedStorage.Player_Data:FindFirstChild("Items")
+
+    if rewardsRoot and itemsFolder then
         for _, folder in ipairs(rewardsRoot:GetChildren()) do
             if folder:IsA("Folder") then
+                local name = folder.Name
                 local amt = (folder:FindFirstChild("Amount") and folder.Amount.Value) or 0
-                table.insert(data.rewardsList, "+" .. amt .. " " .. folder.Name)
+
+                local itemData = itemsFolder:FindFirstChild(name)
+                local total = (itemData and itemData:FindFirstChild("Amount") and itemData.Amount.Value) or 0
+
+                table.insert(data.rewardsList, "+" .. amt .. " " .. name .. " [total: " .. total .. "]")
             end
         end
     end
