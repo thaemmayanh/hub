@@ -32,6 +32,7 @@ local defaultSettings = {
     playAfterUpgrade = false,
     selectedMaps = {},
     selectedActs = {},
+    autoClaimQuest = false,
     slots = {
         place = {true, true, true, true, true, true},
         upgrade = {0, 0, 0, 0, 0, 0}
@@ -600,8 +601,40 @@ controlSection:Toggle({
     end
 })
 
+
+-- Misc Section (bên trái Main Tab)
+local miscSection = MainTab:Section({ Side = "Left", Title = "Misc" })
+
+miscSection:Toggle({
+    Name = "Auto Claim Quest",
+    Default = settings.autoClaimQuest or false,
+    Callback = function(val)
+        settings.autoClaimQuest = val
+        saveSettings(settings)
+
+        if val then
+            task.spawn(function()
+                while settings.autoClaimQuest do
+                    -- Chỉ thực hiện nếu đang ở lobby
+                    if workspace:FindFirstChild("Lobby") then
+                        local args = { "ClaimAll" }
+                        game:GetService("ReplicatedStorage")
+                            :WaitForChild("Remote")
+                            :WaitForChild("Server")
+                            :WaitForChild("Gameplay")
+                            :WaitForChild("QuestEvent")
+                            :FireServer(unpack(args))
+                    end
+
+                    task.wait(10) -- 10s một lần, tuỳ bạn điều chỉnh
+                end
+            end)
+        end
+    end
+})
+
 -- 📦 UI Section
-local section = MainTab:Section({ Side = "Right", Title = "Game Settings" })
+local section = MainTab:Section({ Side = "Right", Title = "Auto Ranger" })
 
 -- 🎯 Dropdown: Select Act
 local actLabelList = {}
