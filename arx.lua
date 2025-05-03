@@ -1,3 +1,4 @@
+
 repeat task.wait() until game:IsLoaded()
 
 -- 🧼 Xoá GUI cũ nếu tồn tại
@@ -29,6 +30,8 @@ local defaultSettings = {
     webhookURL = "",
     webhookEnabled = false,
     playAfterUpgrade = false,
+    selectedMaps = {},
+    selectedActs = {},
     slots = {
         place = {true, true, true, true, true, true},
         upgrade = {0, 0, 0, 0, 0, 0}
@@ -154,6 +157,83 @@ task.spawn(function()
         task.wait(3)
     end
 end)
+
+-- ✅ Act cố định (Map_Stage → Tên hiển thị)
+local ActMapping = {
+    OnePiece_RangerStage1 = "Voocha Village Act 1",
+    OnePiece_RangerStage2 = "Voocha Village Act 2",
+    OnePiece_RangerStage3 = "Voocha Village Act 3",
+
+    Namek_RangerStage1 = "Green Planet Act 1",
+    Namek_RangerStage2 = "Green Planet Act 2",
+    Namek_RangerStage3 = "Green Planet Act 3",
+
+    DemonSlayer_RangerStage1 = "Demon Forest Act 1",
+    DemonSlayer_RangerStage2 = "Demon Forest Act 2",
+    DemonSlayer_RangerStage3 = "Demon Forest Act 3",
+
+    Naruto_RangerStage1 = "Leaf Village Act 1",
+    Naruto_RangerStage2 = "Leaf Village Act 2",
+    Naruto_RangerStage3 = "Leaf Village Act 3",
+
+    OPM_RangerStage1 = "Z City Act 1",
+    OPM_RangerStage2 = "Z City Act 2",
+    OPM_RangerStage3 = "Z City Act 3",
+}
+
+local function getActKeyFromLabel(label, mapKey)
+    for key, val in pairs(ActMapping) do
+        if val == label and key:find(mapKey) then
+            return key
+        end
+    end
+    return nil
+end
+
+function runAutoRanger()
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local Players = game:GetService("Players")
+    local LocalPlayer = Players.LocalPlayer
+    local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+    local PlayRoomEvent = ReplicatedStorage:WaitForChild("Remote"):WaitForChild("Server"):WaitForChild("PlayRoom"):WaitForChild("Event")
+
+    task.spawn(function()
+        while settings.autoRanger do
+            -- ❗ Chỉ chạy nếu đang ở lobby (tồn tại folder "Lobby")
+            if not workspace:FindFirstChild("Lobby") then
+                task.wait(1)
+                continue
+            end
+
+            for _, actLabel in ipairs(settings.selectedActs or {}) do
+                local actKey = nil
+                for key, label in pairs(ActMapping) do
+                    if label == actLabel then
+                        actKey = key
+                        break
+                    end
+                end
+
+                if actKey then
+                    PlayRoomEvent:FireServer(unpack({ "Create" }))
+                    PlayRoomEvent:FireServer(unpack({ "Change-Chapter", { Chapter = actKey } }))
+                    PlayRoomEvent:FireServer(unpack({ "Submit" }))
+                    PlayRoomEvent:FireServer(unpack({ "Start" }))
+
+                    -- Nếu SystemMessage GUI xuất hiện → dừng
+                    local hasSystemMessage = PlayerGui:FindFirstChild("SystemMessage")
+                    if hasSystemMessage and hasSystemMessage.Enabled then
+                        return
+                    end
+
+                    task.wait(1)
+                end
+            end
+
+            task.wait(0.5)
+        end
+    end)
+end
 
 --// Logic: Get and Deploy Units
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -512,6 +592,46 @@ controlSection:Toggle({
     end
 })
 
+-- 📦 UI Section
+local section = MainTab:Section({ Side = "Right", Title = "Game Settings" })
+
+-- 🎯 Dropdown: Select Act
+local actLabelList = {}
+for _, label in pairs(ActMapping) do
+    table.insert(actLabelList, label)
+end
+
+section:Dropdown({
+    Name = "Select Act",
+    Search = true,
+    Multi = true,
+    Required = false,
+    Options = actLabelList,
+    Default = settings.selectedActs or {},
+    Callback = function(selectedDict)
+        local selectedArray = {}
+        for key, val in pairs(selectedDict) do
+            if val then table.insert(selectedArray, key) end
+        end
+        settings.selectedActs = selectedArray
+        saveSettings(settings)
+    end
+})
+
+-- 🔁 Toggle: Auto Ranger
+section:Toggle({
+    Name = "Auto Ranger",
+    Default = settings.autoRanger or false,
+    Callback = function(val)
+        settings.autoRanger = val
+        saveSettings(settings)
+        if val then
+            task.spawn(runAutoRanger)
+        end
+    end
+})
+
+
 --// Left Side: Auto Toggles
 local leftSection = AutoPlayTab:Section({ Side = "Left", Title = "Auto Options" })
 
@@ -639,6 +759,6 @@ webhookSection:Toggle({
 webhookSection:Button({
     Name = "Test Webhook",
     Callback = function()
-        sendRewardWebhook()
+        sendWebhook()
     end
 })
