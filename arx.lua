@@ -200,13 +200,13 @@ function runAutoRanger()
 
     task.spawn(function()
         while settings.autoRanger do
-            -- ❗ Chỉ chạy nếu đang ở lobby (tồn tại folder "Lobby")
             if not workspace:FindFirstChild("Lobby") then
                 task.wait(1)
                 continue
             end
 
             for _, actLabel in ipairs(settings.selectedActs or {}) do
+                -- Lấy actKey từ label
                 local actKey = nil
                 for key, label in pairs(ActMapping) do
                     if label == actLabel then
@@ -216,18 +216,23 @@ function runAutoRanger()
                 end
 
                 if actKey then
-                    PlayRoomEvent:FireServer(unpack({ "Create" }))
-                    PlayRoomEvent:FireServer(unpack({ "Change-Chapter", { Chapter = actKey } }))
-                    PlayRoomEvent:FireServer(unpack({ "Submit" }))
-                    PlayRoomEvent:FireServer(unpack({ "Start" }))
+                    -- Tách mapKey từ actKey
+                    local mapKey = actKey:match("^(.-)_")
+                    if mapKey then
+                        PlayRoomEvent:FireServer(unpack({ "Create" }))
+                        PlayRoomEvent:FireServer(unpack({ "Change-Mode", { Mode = "Ranger Stage" } }))
+                        PlayRoomEvent:FireServer(unpack({ "Change-World", { World = mapKey } }))
+                        PlayRoomEvent:FireServer(unpack({ "Change-Chapter", { Chapter = actKey } }))
+                        PlayRoomEvent:FireServer(unpack({ "Submit" }))
+                        PlayRoomEvent:FireServer(unpack({ "Start" }))
 
-                    -- Nếu SystemMessage GUI xuất hiện → dừng
-                    local hasSystemMessage = PlayerGui:FindFirstChild("SystemMessage")
-                    if hasSystemMessage and hasSystemMessage.Enabled then
-                        return
+                        local hasSystemMessage = PlayerGui:FindFirstChild("SystemMessage")
+                        if hasSystemMessage and hasSystemMessage.Enabled then
+                            return
+                        end
+
+                        task.wait(1)
                     end
-
-                    task.wait(1)
                 end
             end
 
