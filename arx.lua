@@ -1,4 +1,3 @@
-
 repeat task.wait() until game:IsLoaded()
 
 -- 🧼 Xoá GUI cũ nếu tồn tại
@@ -30,13 +29,17 @@ local defaultSettings = {
     webhookURL = "",
     webhookEnabled = false,
     playAfterUpgrade = false,
-    selectedMaps = {},
     selectedActs = {},
     autoClaimQuest = false,
+    autoEvolveRare = false,
     slots = {
         place = {true, true, true, true, true, true},
         upgrade = {0, 0, 0, 0, 0, 0}
-    }
+    },
+        selectPotential = {},
+    selectStats     = {},
+    selectUnit      = "",
+    startRoll       = false,
 }
 
 local function loadSettings()
@@ -151,11 +154,19 @@ task.spawn(function()
 end)
 
 task.spawn(function()
+    local hasFired = false
+
     while true do
-        if settings.autoStart then
+        if settings.autoStart and not workspace:FindFirstChild("Lobby") and not hasFired then
+            task.wait(2) -- đợi 2s sau khi vào trận
             game.ReplicatedStorage.Remote.Server.OnGame.Voting.VotePlaying:FireServer()
+            hasFired = true
+        elseif workspace:FindFirstChild("Lobby") then
+            -- reset lại nếu quay về lobby (sẵn sàng cho trận sau)
+            hasFired = false
         end
-        task.wait(3)
+
+        task.wait(1)
     end
 end)
 
@@ -291,8 +302,6 @@ local function deployUnits()
 end
 
 --upgrade
-local upgradeState = {0, 0, 0, 0, 0, 0}
-
 local function getYen()
     local success, yen = pcall(function()
         return game.Players.LocalPlayer.PlayerGui.HUD.InGame.Main.Stats.Yen.YenValue.Value
@@ -301,45 +310,59 @@ local function getYen()
 end
 
 function tryUpgradeSlot(i)
-	local player = game.Players.LocalPlayer
-	local unitsFolder = player:WaitForChild("UnitsFolder")
-	local upgradeInput = settings.slots.upgrade
-	local targetUpgrade = upgradeInput[i]
+    local player = game.Players.LocalPlayer
+    local unitsFolder = player:WaitForChild("UnitsFolder")
+    local upgradeInput = settings.slots.upgrade
 
-	if not settings.slots.place[i] or targetUpgrade <= 0 then return false end
-	if upgradeState[i] >= targetUpgrade then return false end
+    local slot = player.PlayerGui:WaitForChild("UnitsLoadout"):WaitForChild("Main"):FindFirstChild("UnitLoadout"..i)
+    if not slot then return false end
 
-	local slot = player.PlayerGui:WaitForChild("UnitsLoadout"):WaitForChild("Main"):FindFirstChild("UnitLoadout"..i)
-	if not slot then return false end
+    local folderObj = slot:FindFirstChild("Frame") and slot.Frame:FindFirstChild("UnitFrame") and
+        slot.Frame.UnitFrame:FindFirstChild("Info") and slot.Frame.UnitFrame.Info:FindFirstChild("Folder")
 
-	local folderObj = slot:FindFirstChild("Frame") and slot.Frame:FindFirstChild("UnitFrame") and
-		slot.Frame.UnitFrame:FindFirstChild("Info") and slot.Frame.UnitFrame.Info:FindFirstChild("Folder")
+    if not folderObj or not folderObj:IsA("ObjectValue") or not folderObj.Value then return false end
 
-	if not folderObj or not folderObj:IsA("ObjectValue") or not folderObj.Value then return false end
+    local unitName = folderObj.Value.Name
+    local unitObject = unitsFolder:FindFirstChild(unitName)
+    if not unitObject then return false end
 
-	local unitName = folderObj.Value.Name
-	local unitObject = unitsFolder:FindFirstChild(unitName)
-	if not unitObject then return false end
+    local cost = 0
+    local ok = pcall(function()
+        cost = unitObject:WaitForChild("Upgrade_Folder"):WaitForChild("Upgrade_Cost").Value
+    end)
+    if not ok or cost <= 0 then return false end
 
-	local cost = 0
-	local ok = pcall(function()
-		cost = unitObject:WaitForChild("Upgrade_Folder"):WaitForChild("Upgrade_Cost").Value
-	end)
-	if not ok or cost <= 0 then return false end
+    local yenBefore = getYen()
+    if yenBefore < cost then return false end
 
-	local yen = getYen()
-	if yen < cost then return false end
+    local success = pcall(function()
+        game.ReplicatedStorage.Remote.Server.Units.Upgrade:FireServer(unitObject)
+    end)
+    return false
+end
 
-	local success = pcall(function()
-		game.ReplicatedStorage.Remote.Server.Units.Upgrade:FireServer(unitObject)
-	end)
+local function getUnitUpgradeLevel(i)
+    local player = game.Players.LocalPlayer
+    local unitsFolder = player:WaitForChild("UnitsFolder")
 
-	if success then
-		upgradeState[i] += 1
-		return true
-	end
+    local slot = player.PlayerGui:WaitForChild("UnitsLoadout"):WaitForChild("Main"):FindFirstChild("UnitLoadout"..i)
+    if not slot then return 0 end
 
-	return false
+    local folderObj = slot:FindFirstChild("Frame") and slot.Frame:FindFirstChild("UnitFrame") and
+        slot.Frame.UnitFrame:FindFirstChild("Info") and slot.Frame.UnitFrame.Info:FindFirstChild("Folder")
+
+    if not folderObj or not folderObj:IsA("ObjectValue") or not folderObj.Value then return 0 end
+
+    local unitName = folderObj.Value.Name
+    local unitObject = unitsFolder:FindFirstChild(unitName)
+    if not unitObject then return 0 end
+
+    local level = 0
+    pcall(function()
+        level = unitObject:WaitForChild("Upgrade_Folder"):WaitForChild("Level").Value
+    end)
+
+    return level
 end
 
 local function waitForGameEndToDisappear()
@@ -349,9 +372,6 @@ local function waitForGameEndToDisappear()
 		return false
 	end
 
-	for i = 1, 6 do
-		upgradeState[i] = 0
-	end
 	settings.autoUpgrade = false
 	saveSettings(settings)
 
@@ -365,48 +385,43 @@ local function waitForGameEndToDisappear()
 	return true
 end
 
+local waitingForUpgrade = false
 local isUpgrading = false
 
-function upgradeUnits()
-	if isUpgrading then return end
-	isUpgrading = true
+local function upgradeUnits()
+    isUpgrading = true
+    waitingForUpgrade = true
 
-	local playerGui = game.Players.LocalPlayer:WaitForChild("PlayerGui")
-	local preGameUI = playerGui:FindFirstChild("HUD")
-		and playerGui.HUD:FindFirstChild("UnitSelectBeforeGameRunning_UI")
+    for i = 1, 6 do
+        local target = settings.slots.upgrade[i]
+        if settings.slots.place[i] then
+            while true do
+                local current = getUnitUpgradeLevel(i)
+                if current >= target then break end
 
-	if preGameUI then
-		isUpgrading = false
-		return
-	end
+                local success = tryUpgradeSlot(i)
+                if success then
+                    task.wait(0.2)
+                else
+                    task.wait(1) -- chờ lâu hơn nếu không nâng được (thường do thiếu tiền)
+                end
+            end
+        end
+    end
 
-	-- 🧠 Reset nếu vừa hết ván
-	local paused = waitForGameEndToDisappear()
-	if paused then
-		-- ✅ Đợi 2s rồi tiếp tục chạy upgrade lại
-		task.wait(1)
-	end
-
-	while true do
-		local upgraded = false
-
-		for i = 1, 6 do
-			local targetUpgrade = settings.slots.upgrade[i]
-			if settings.slots.place[i] and upgradeState[i] < targetUpgrade then
-				local didUpgrade = tryUpgradeSlot(i)
-				if didUpgrade then
-					upgraded = true
-					task.wait(0.5)
-					break
-				end
-			end
-		end
-
-		if not upgraded then break end
-	end
-
-	isUpgrading = false
+    waitingForUpgrade = false
+    isUpgrading = false
 end
+
+local function allUpgradesDone()
+    for i = 1, 6 do
+        if settings.slots.place[i] and getUnitUpgradeLevel(i) < settings.slots.upgrade[i] then
+            return false
+        end
+    end
+    return true
+end
+
 
 --send 
 local Players     = game:GetService("Players")
@@ -452,11 +467,12 @@ local function collectData()
         end
     end
 
-    -- 🎁 Rewards list with total
+    -- 🎁 Rewards list with total (corrected for Player_Data[LocalPlayer.Name].Items)
     data.rewardsList = {}
     local rewardsRoot = LocalPlayer:FindFirstChild("RewardsShow")
-    local itemsFolder = game:GetService("ReplicatedStorage"):FindFirstChild("Player_Data")
-                        and game.ReplicatedStorage.Player_Data:FindFirstChild("Items")
+    local playerData = game:GetService("ReplicatedStorage"):FindFirstChild("Player_Data")
+    local itemsFolder = playerData and playerData:FindFirstChild(LocalPlayer.Name)
+                        and playerData[LocalPlayer.Name]:FindFirstChild("Items")
 
     if rewardsRoot and itemsFolder then
         for _, folder in ipairs(rewardsRoot:GetChildren()) do
@@ -518,7 +534,8 @@ local function sendWebhook()
     -- Payload JSON
     local payload = {
         embeds = {{
-            title     = "Anime Rangers X",
+            title     = "Anime Rangers X - Pịa Hub",
+            description = "https://discord.gg/QAmCkmBpN2",
             color     = color,
             fields    = fields,
             thumbnail = { url = "https://i.imgur.com/CK7zYZy.jpeg" },
@@ -554,6 +571,139 @@ LocalPlayer.PlayerGui.ChildAdded:Connect(function(gui)
     end
 end)
 
+--//auto tier
+local TierUnitNames = {
+    "Naruto",
+    "Naruto:Shiny",
+    "Zoro",
+    "Zoro:Shiny",
+    "Chaozi:Shiny",
+    "Chaozi",
+    "Goku",
+    "Goku:Shiny",
+    "Krillin",
+    "Luffy",
+    "Nezuko",
+    "Sanji",
+    "Usopp",
+    "Yamcha",
+    "Krillin:Shiny",
+    "Luffy:Shiny",
+    "Nezuko:Shiny",
+    "Sanji:Shiny",
+    "Usopp:Shiny",
+    "Yamcha:Shiny",
+}
+
+local function evolveRareUnits()
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local LocalPlayer = game:GetService("Players").LocalPlayer
+    local collection = ReplicatedStorage:FindFirstChild("Player_Data")
+        and ReplicatedStorage.Player_Data:FindFirstChild(LocalPlayer.Name)
+        and ReplicatedStorage.Player_Data[LocalPlayer.Name]:FindFirstChild("Collection")
+
+    if not collection then return end
+
+    for _, unitFolder in ipairs(collection:GetChildren()) do
+        if unitFolder:IsA("Folder") and table.find(TierUnitNames, unitFolder.Name) then
+            local tag = unitFolder:FindFirstChild("Tag")
+            local evolveTier = unitFolder:FindFirstChild("EvolveTier")
+
+            if tag and tag:IsA("StringValue") and tag.Value ~= "" then
+                local tier = evolveTier and evolveTier.Value or ""
+                if tier == "" then
+                    local args = { tag.Value, "Hyper" }
+                    ReplicatedStorage.Remote.Server.Units.EvolveTier:FireServer(unpack(args))
+                    task.wait(0.1) -- ⏱ Delay giữa mỗi lần tiến hoá
+                end
+            end
+        end
+    end
+end
+
+-- Biến điều khiển vòng lặp
+local isRolling = false
+
+-- Hàm chính để spam roll
+local function autoRoll()
+    local rs  = game:GetService("ReplicatedStorage")
+    local plr = game:GetService("Players").LocalPlayer
+    local collection = rs:WaitForChild("Player_Data")
+                         :WaitForChild(plr.Name)
+                         :WaitForChild("Collection")
+    local rerollRemote = rs
+        :WaitForChild("Remote")
+        :WaitForChild("Server")
+        :WaitForChild("Gambling")
+        :WaitForChild("RerollPotential")
+    local unitEntry = settings.selectUnit
+    local unitName = unitEntry:match("^(.-)%s*%[") or unitEntry
+    local folder = collection:FindFirstChild(unitName)
+    if not folder then
+        warn("Không tìm thấy folder của unit:", unitName)
+        return
+    end
+
+    local pending = {}
+    for _, potential in ipairs(settings.selectPotential) do
+        local resultNV = folder:FindFirstChild(potential .. "Potential")
+        local resultVal = resultNV and resultNV.Value or ""
+
+        local matched = false
+        for _, desired in ipairs(settings.selectStats) do
+            if resultVal == desired then
+                matched = true
+                break
+            end
+        end
+
+        if not matched then
+            pending[potential] = true
+        end
+    end
+
+    if not next(pending) then
+        statsSection:SetValue("start roll", false)
+        settings.startRoll = false
+        saveSettings(settings)
+        return
+    end
+
+    isRolling = true
+    while isRolling and next(pending) do
+        for potential in pairs(pending) do
+            if not isRolling then break end
+
+            local tagNV = folder:FindFirstChild("Tag")
+            if not tagNV then
+                warn("Không tìm thấy tag của unit:", unitName)
+                isRolling = false
+                return
+            end
+
+            local tagStr = tagNV.Value
+            rerollRemote:FireServer(potential, tagStr, "Selective")
+
+            wait(0.3)
+
+            local resultNV = folder:FindFirstChild(potential .. "Potential")
+            local resultVal = resultNV and resultNV.Value or ""
+
+            for _, desired in ipairs(settings.selectStats) do
+                if resultVal == desired then
+                    pending[potential] = nil
+                    break
+                end
+            end
+        end
+    end
+
+    isRolling = false
+    statsSection:SetValue("start roll", false)
+    settings.startRoll = false
+    saveSettings(settings)
+end
+
 --// Create Window
 local Window = MacLib:Window({
     Title = "Pịa Hub",
@@ -567,6 +717,8 @@ local TabGroup = Window:TabGroup()
 local MainTab = TabGroup:Tab({ Name = "Main" })
 local AutoPlayTab = TabGroup:Tab({ Name = "Auto Play" })
 local WebhookTab = TabGroup:Tab({ Name = "Webhook" })
+local ShopTab = TabGroup:Tab({ Name = "Shop" })
+
 --main
 local controlSection = MainTab:Section({ Side = "Left", Title = "Auto Options" })
 
@@ -620,8 +772,9 @@ miscSection:Toggle({
         if val then
             task.spawn(function()
                 while settings.autoClaimQuest do
-                    -- Chỉ thực hiện nếu đang ở lobby
-                    if workspace:FindFirstChild("Lobby") then
+                    local lobbyFolder = workspace:FindFirstChild("Lobby")
+
+                    if lobbyFolder and lobbyFolder:IsA("Folder") then
                         local args = { "ClaimAll" }
                         game:GetService("ReplicatedStorage")
                             :WaitForChild("Remote")
@@ -631,12 +784,78 @@ miscSection:Toggle({
                             :FireServer(unpack(args))
                     end
 
-                    task.wait(10) -- 10s một lần, tuỳ bạn điều chỉnh
+                    task.wait(10) -- kiểm tra mỗi 10s
                 end
             end)
         end
     end
 })
+
+--//roll traill
+local rerollConfig = {
+    unit = nil,
+    trail = {},
+    start = false,
+}
+
+function autoRollTrail(unitEntry, desiredTrails)
+    local rs = game:GetService("ReplicatedStorage")
+    local plr = game:GetService("Players").LocalPlayer
+    local unitName = unitEntry:match("^(.-)%s*%[") or unitEntry -- Tách tên không lấy level
+    local collection = rs:WaitForChild("Player_Data")
+                         :WaitForChild(plr.Name)
+                         :WaitForChild("Collection")
+    local rerollRemote = rs:WaitForChild("Remote")
+                          :WaitForChild("Server")
+                          :WaitForChild("Gambling")
+                          :WaitForChild("RerollTrait")
+
+    local folder = collection:FindFirstChild(unitName)
+    if not folder then
+        warn("Không tìm thấy unit:", unitName)
+        return
+    end
+
+    local function hasDesiredTrail()
+        local primary = folder:FindFirstChild("PrimaryTrait")
+        local secondary = folder:FindFirstChild("SecondaryTrait")
+        local pVal = primary and primary.Value or ""
+        local sVal = secondary and secondary.Value or ""
+
+        for _, desired in ipairs(desiredTrails) do
+            if pVal == desired or sVal == desired then
+                return true
+            end
+        end
+        return false
+    end
+
+    -- Nếu đã có trail mong muốn thì không roll
+    if hasDesiredTrail() then
+        print("🎉 Đã có trail mong muốn trước khi roll:", unitName)
+        return
+    end
+
+    print("🔁 Bắt đầu roll trail cho:", unitName)
+
+    while rerollConfig.start do
+        local args = {
+            folder, -- Folder của unit
+            "Reroll",
+            "Main",
+            "Shards"
+        }
+
+        rerollRemote:FireServer(unpack(args))
+        task.wait(0.3)
+
+        if hasDesiredTrail() then
+            print("✅ Roll thành công:", unitName)
+            rerollConfig.start = false -- dừng toggle
+            break
+        end
+    end
+end
 
 -- 📦 UI Section
 local section = MainTab:Section({ Side = "Right", Title = "Auto Ranger" })
@@ -711,9 +930,7 @@ leftSection:Toggle({
 
                     -- Nếu bật Play After Upgrade → đợi upgrade xong
                     if settings.playAfterUpgrade and settings.autoUpgrade then
-                        while isUpgrading do
-                            task.wait(0.5)
-                        end
+                        upgradeUnits()
                     end
 
                     deployUnits()
@@ -806,5 +1023,254 @@ webhookSection:Button({
     Name = "Test Webhook",
     Callback = function()
         sendWebhook()
+    end
+})
+
+local tierSection = ShopTab:Section({ Side = "Left", Title = "Auto Tier(Rare)" })
+
+tierSection:Toggle({
+    Name = "Auto Evolve Tier (Rare)",
+    Default = settings.autoEvolveRare,
+    Callback = function(val)
+        settings.autoEvolveRare = val
+        saveSettings(settings)
+
+        if val then
+            evolveRareUnits()
+        end
+    end
+})
+
+-- 📦 Section: Summon (Left)
+local summonSection = ShopTab:Section({ Side = "Left", Title = "Summon" })
+
+-- 🏷 Dropdown: Select Banner (không lưu)
+summonSection:Dropdown({
+    Name = "Select Banner",
+    Options = { "Standard", "Rateup" },
+    Multi = false,
+    Default = settings.selectBanner or "Standard",
+    Callback = function(val)
+        settings.selectBanner = val
+    end
+})
+
+-- 🧹 Dropdown: Select Auto Sell (không lưu)
+summonSection:Dropdown({
+    Name = "Select Auto Sell",
+    Options = { "Rare", "Epic", "Legendary", "Shiny" },
+    Multi = true,
+    Default = settings.autoSellTiers or {},
+    Callback = function(selectedDict)
+        settings.autoSellTiers = selectedDict
+    end
+})
+
+-- 🔁 Toggle: Auto Summon x10 (không lưu)
+summonSection:Toggle({
+    Name = "Auto Summon x10",
+    Default = settings.autoSummonX10,
+    Callback = function(val)
+        settings.autoSummonX10 = val
+
+        if val then
+            task.spawn(function()
+                while settings.autoSummonX10 do
+                    local args = {
+                        "x10",
+                        settings.selectBanner or "Standard"
+                    }
+
+                    if settings.autoSellTiers and next(settings.autoSellTiers) ~= nil then
+                        table.insert(args, settings.autoSellTiers)
+                    end
+
+                    game:GetService("ReplicatedStorage")
+                        :WaitForChild("Remote")
+                        :WaitForChild("Server")
+                        :WaitForChild("Gambling")
+                        :WaitForChild("UnitsGacha")
+                        :FireServer(unpack(args))
+
+                    task.wait(0.3)
+                end
+            end)
+        end
+    end
+})
+
+-- 🔁 Toggle: Auto Summon x1 (không lưu)
+summonSection:Toggle({
+    Name = "Auto Summon x1",
+    Default = settings.autoSummonX1,
+    Callback = function(val)
+        settings.autoSummonX1 = val
+
+        if val then
+            task.spawn(function()
+                while settings.autoSummonX1 do
+                    local args = {
+                        "x1",
+                        settings.selectBanner or "Standard"
+                    }
+
+                    if settings.autoSellTiers and next(settings.autoSellTiers) ~= nil then
+                        table.insert(args, settings.autoSellTiers)
+                    end
+
+                    game:GetService("ReplicatedStorage")
+                        :WaitForChild("Remote")
+                        :WaitForChild("Server")
+                        :WaitForChild("Gambling")
+                        :WaitForChild("UnitsGacha")
+                        :FireServer(unpack(args))
+
+                    task.wait(0.3)
+                end
+            end)
+        end
+    end
+})
+
+-- Sau phần summonSection trong ShopTab
+local statsSection = ShopTab:Section({ Side = "Right", Title = "Stats" })
+
+-- MultiDropdown: select Potential
+statsSection:Dropdown({
+    Name     = "select Potential",
+    Options  = { "Damage", "Health", "Speed", "Range", "AttackCooldown" },
+    Multi    = true,
+    Default  = settings.selectPotential or {},
+    Callback = function(selectedDict)
+        settings.selectPotential = {}
+        for key, val in pairs(selectedDict) do
+            if val then table.insert(settings.selectPotential, key) end
+        end
+        saveSettings(settings)
+    end
+})
+
+-- MultiDropdown: select Stats
+statsSection:Dropdown({
+    Name     = "select Stats",
+    Options  = { "S", "SS", "SSS", "O-", "O", "O+" },
+    Multi    = true,
+    Default  = settings.selectStats or {},
+    Callback = function(selectedDict)
+        settings.selectStats = {}
+        for key, val in pairs(selectedDict) do
+            if val then table.insert(settings.selectStats, key) end
+        end
+        saveSettings(settings)
+    end
+})
+
+-- SingleDropdown: select unit (hiển thị "UnitName [Level]")
+statsSection:Dropdown({
+    Name     = "select unit",
+    Options  = (function()
+        local rs  = game:GetService("ReplicatedStorage")
+        local plr = game:GetService("Players").LocalPlayer
+        local col = rs:WaitForChild("Player_Data")
+                       :WaitForChild(plr.Name)
+                       :WaitForChild("Collection")
+        local names = {}
+        for _, folder in ipairs(col:GetChildren()) do
+            local lvlNV = folder:FindFirstChild("Level")
+            local lvl = (lvlNV and lvlNV.Value) or 0
+            table.insert(names, string.format("%s [%d]", folder.Name, lvl))
+        end
+        return names
+    end)(),
+    Multi    = false,
+    Default  = settings.selectUnit or "",
+    Callback = function(val)
+        settings.selectUnit = val
+        saveSettings(settings)
+    end
+})
+
+-- Toggle: start roll
+statsSection:Toggle({
+    Name     = "start roll",
+    Default  = settings.startRoll or false,
+    Callback = function(val)
+        settings.startRoll = val
+        saveSettings(settings)
+        if val then
+            if not isRolling then
+                isRolling = true
+                coroutine.wrap(autoRoll)()
+            end
+        else
+            isRolling = false
+        end
+    end
+})
+
+--\\roll trail
+local trailRerollSection = ShopTab:Section({ Side = "Right", Title = "Trail Reroll" })
+
+-- 🔽 Dropdown: Select Unit
+trailRerollSection:Dropdown({
+    Name = "Select Unit",
+    Options = (function()
+        local rs = game:GetService("ReplicatedStorage")
+        local plr = game:GetService("Players").LocalPlayer
+        local collection = rs:WaitForChild("Player_Data")
+                             :WaitForChild(plr.Name)
+                             :WaitForChild("Collection")
+
+        local unitList = {}
+        for _, unit in ipairs(collection:GetChildren()) do
+            local levelVal = unit:FindFirstChild("Level")
+            local label = unit.Name
+            if levelVal then
+                label = label .. " [" .. levelVal.Value .. "]"
+            end
+            table.insert(unitList, label)
+        end
+        return unitList
+    end)(),
+    Multi = false,
+    Callback = function(val)
+        rerollConfig.unit = val
+    end
+})
+
+-- 🔽 MultiDropdown: Select Trail
+trailRerollSection:Dropdown({
+    Name = "Select Trail",
+    Options = {
+        "Blitz", "Juggernaut", "Millionaire", "Violent",
+        "Seraph", "Capitalist", "Duplicator", "Sovereign"
+    },
+    Multi = true,
+    Default = {},
+    Callback = function(selectedDict)
+        rerollConfig.trail = {}
+        for key, val in pairs(selectedDict) do
+            if val then
+                table.insert(rerollConfig.trail, key)
+            end
+        end
+    end
+})
+
+-- ✅ Toggle: Start Roll Trail
+trailRerollSection:Toggle({
+    Name = "Start Roll Trail",
+    Default = false,
+    Callback = function(val)
+        rerollConfig.start = val
+        if val then
+            print("🔁 Bắt đầu roll trail:", rerollConfig.unit, "với trail:", rerollConfig.trail)
+            coroutine.wrap(function()
+                autoRollTrail(rerollConfig.unit, rerollConfig.trail)
+            end)()
+        else
+            print("⛔ Dừng roll trail")
+            -- Gắn logic dừng tại đây nếu có
+        end
     end
 })
