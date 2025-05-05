@@ -739,72 +739,6 @@ local function autoRoll()
     saveSettings(settings)
 end
 
---//roll traill
-local rerollConfig = {
-    unit = nil,
-    trail = {},
-    start = false,
-}
-
-function autoRollTrail(unitEntry, desiredTrails)
-    local rs = game:GetService("ReplicatedStorage")
-    local plr = game:GetService("Players").LocalPlayer
-    local unitName = unitEntry:match("^(.-)%s*%[") or unitEntry -- Tách tên không lấy level
-    local collection = rs:WaitForChild("Player_Data")
-                         :WaitForChild(plr.Name)
-                         :WaitForChild("Collection")
-    local rerollRemote = rs:WaitForChild("Remote")
-                          :WaitForChild("Server")
-                          :WaitForChild("Gambling")
-                          :WaitForChild("RerollTrait")
-
-    local folder = collection:FindFirstChild(unitName)
-    if not folder then
-        warn("Không tìm thấy unit:", unitName)
-        return
-    end
-
-    local function hasDesiredTrail()
-        local primary = folder:FindFirstChild("PrimaryTrait")
-        local secondary = folder:FindFirstChild("SecondaryTrait")
-        local pVal = primary and primary.Value or ""
-        local sVal = secondary and secondary.Value or ""
-
-        for _, desired in ipairs(desiredTrails) do
-            if pVal == desired or sVal == desired then
-                return true
-            end
-        end
-        return false
-    end
-
-    -- Nếu đã có trail mong muốn thì không roll
-    if hasDesiredTrail() then
-        print("🎉 Đã có trail mong muốn trước khi roll:", unitName)
-        return
-    end
-
-    print("🔁 Bắt đầu roll trail cho:", unitName)
-
-    while rerollConfig.start do
-        local args = {
-            folder, -- Folder của unit
-            "Reroll",
-            "Main",
-            "Shards"
-        }
-
-        rerollRemote:FireServer(unpack(args))
-        task.wait(0.3)
-
-        if hasDesiredTrail() then
-            print("✅ Roll thành công:", unitName)
-            rerollConfig.start = false -- dừng toggle
-            break
-        end
-    end
-end
-
 --// Create Window
 local Window = MacLib:Window({
     Title = "Pịa Hub",
@@ -1343,6 +1277,72 @@ statsSection:Toggle({
         end
     end
 })
+
+    --//roll traill
+    local rerollConfig = {
+        unit = nil,
+        trail = {},
+        start = false,
+    }
+
+    function autoRollTrail(unitEntry, desiredTrails)
+        local rs = game:GetService("ReplicatedStorage")
+        local plr = game:GetService("Players").LocalPlayer
+        local unitName = unitEntry:match("^(.-)%s*%[") or unitEntry -- Tách tên không lấy level
+        local collection = rs:WaitForChild("Player_Data")
+                            :WaitForChild(plr.Name)
+                            :WaitForChild("Collection")
+        local rerollRemote = rs:WaitForChild("Remote")
+                            :WaitForChild("Server")
+                            :WaitForChild("Gambling")
+                            :WaitForChild("RerollTrait")
+
+        local folder = collection:FindFirstChild(unitName)
+        if not folder then
+            warn("Không tìm thấy unit:", unitName)
+            return
+        end
+
+        local function hasDesiredTrail()
+            local primary = folder:FindFirstChild("PrimaryTrait")
+            local secondary = folder:FindFirstChild("SecondaryTrait")
+            local pVal = primary and primary.Value or ""
+            local sVal = secondary and secondary.Value or ""
+
+            for _, desired in ipairs(desiredTrails) do
+                if pVal == desired or sVal == desired then
+                    return true
+                end
+            end
+            return false
+        end
+
+        -- Nếu đã có trail mong muốn thì không roll
+        if hasDesiredTrail() then
+            print("🎉 Đã có trail mong muốn trước khi roll:", unitName)
+            return
+        end
+
+        print("🔁 Bắt đầu roll trail cho:", unitName)
+
+        while rerollConfig.start do
+            local args = {
+                folder, -- Folder của unit
+                "Reroll",
+                "Main",
+                "Shards"
+            }
+
+            rerollRemote:FireServer(unpack(args))
+            task.wait(0.3)
+
+            if hasDesiredTrail() then
+                print("✅ Roll thành công:", unitName)
+                rerollConfig.start = false -- dừng toggle
+                break
+            end
+        end
+    end
 
 --\\roll trail
 local trailRerollSection = ShopTab:Section({ Side = "Right", Title = "Trail Reroll" })
