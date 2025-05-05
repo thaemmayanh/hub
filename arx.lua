@@ -9,6 +9,12 @@ for _, gui in ipairs(CoreGui:GetChildren()) do
     end
 end
 
+local vu = game:GetService("VirtualUser")
+game:GetService("Players").LocalPlayer.Idled:Connect(function()
+    vu:CaptureController()
+    vu:ClickButton2(Vector2.new(0, 0))
+end)
+
 local MacLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/thaemmayanh/thaem/refs/heads/main/lib"))()
 
 --// Setup Settings
@@ -40,6 +46,9 @@ local defaultSettings = {
     selectStats     = {},
     selectUnit      = "",
     startRoll       = false,
+    autoReloadOnTeleport = false,
+    autoJoinChallenge = false,
+    deleteMap = false,
 }
 
 local function loadSettings()
@@ -310,59 +319,43 @@ local function getYen()
 end
 
 function tryUpgradeSlot(i)
-    local player = game.Players.LocalPlayer
-    local unitsFolder = player:WaitForChild("UnitsFolder")
-    local upgradeInput = settings.slots.upgrade
+	local player = game.Players.LocalPlayer
+	local unitsFolder = player:WaitForChild("UnitsFolder")
+	local upgradeInput = settings.slots.upgrade
+	local targetUpgrade = upgradeInput[i]
 
-    local slot = player.PlayerGui:WaitForChild("UnitsLoadout"):WaitForChild("Main"):FindFirstChild("UnitLoadout"..i)
-    if not slot then return false end
+	if not settings.slots.place[i] or targetUpgrade <= 0 then return false end
 
-    local folderObj = slot:FindFirstChild("Frame") and slot.Frame:FindFirstChild("UnitFrame") and
-        slot.Frame.UnitFrame:FindFirstChild("Info") and slot.Frame.UnitFrame.Info:FindFirstChild("Folder")
+	local slot = player.PlayerGui:WaitForChild("UnitsLoadout"):WaitForChild("Main"):FindFirstChild("UnitLoadout"..i)
+	if not slot then return false end
 
-    if not folderObj or not folderObj:IsA("ObjectValue") or not folderObj.Value then return false end
+	local folderObj = slot:FindFirstChild("Frame") and slot.Frame:FindFirstChild("UnitFrame") and
+		slot.Frame.UnitFrame:FindFirstChild("Info") and slot.Frame.UnitFrame.Info:FindFirstChild("Folder")
 
-    local unitName = folderObj.Value.Name
-    local unitObject = unitsFolder:FindFirstChild(unitName)
-    if not unitObject then return false end
+	if not folderObj or not folderObj:IsA("ObjectValue") or not folderObj.Value then return false end
 
-    local cost = 0
-    local ok = pcall(function()
-        cost = unitObject:WaitForChild("Upgrade_Folder"):WaitForChild("Upgrade_Cost").Value
-    end)
-    if not ok or cost <= 0 then return false end
+	local unitName = folderObj.Value.Name
+	local unitObject = unitsFolder:FindFirstChild(unitName)
+	if not unitObject then return false end
 
-    local yenBefore = getYen()
-    if yenBefore < cost then return false end
+	local upgradeFolder = unitObject:FindFirstChild("Upgrade_Folder")
+	if not upgradeFolder then return false end
 
-    local success = pcall(function()
-        game.ReplicatedStorage.Remote.Server.Units.Upgrade:FireServer(unitObject)
-    end)
-    return false
-end
+	local level = upgradeFolder:FindFirstChild("Level")
+	local cost = upgradeFolder:FindFirstChild("Upgrade_Cost")
+	if not level or not cost then return false end
 
-local function getUnitUpgradeLevel(i)
-    local player = game.Players.LocalPlayer
-    local unitsFolder = player:WaitForChild("UnitsFolder")
+	local currentLevel = level.Value
+	if currentLevel >= targetUpgrade then return false end
 
-    local slot = player.PlayerGui:WaitForChild("UnitsLoadout"):WaitForChild("Main"):FindFirstChild("UnitLoadout"..i)
-    if not slot then return 0 end
+	local yen = getYen()
+	if yen < cost.Value then return false end
 
-    local folderObj = slot:FindFirstChild("Frame") and slot.Frame:FindFirstChild("UnitFrame") and
-        slot.Frame.UnitFrame:FindFirstChild("Info") and slot.Frame.UnitFrame.Info:FindFirstChild("Folder")
+	local success = pcall(function()
+		game.ReplicatedStorage.Remote.Server.Units.Upgrade:FireServer(unitObject)
+	end)
 
-    if not folderObj or not folderObj:IsA("ObjectValue") or not folderObj.Value then return 0 end
-
-    local unitName = folderObj.Value.Name
-    local unitObject = unitsFolder:FindFirstChild(unitName)
-    if not unitObject then return 0 end
-
-    local level = 0
-    pcall(function()
-        level = unitObject:WaitForChild("Upgrade_Folder"):WaitForChild("Level").Value
-    end)
-
-    return level
+	return success
 end
 
 local function waitForGameEndToDisappear()
@@ -372,6 +365,9 @@ local function waitForGameEndToDisappear()
 		return false
 	end
 
+	for i = 1, 6 do
+		upgradeState[i] = 0
+	end
 	settings.autoUpgrade = false
 	saveSettings(settings)
 
@@ -385,43 +381,82 @@ local function waitForGameEndToDisappear()
 	return true
 end
 
-local waitingForUpgrade = false
 local isUpgrading = false
 
-local function upgradeUnits()
-    isUpgrading = true
-    waitingForUpgrade = true
+function upgradeUnits()
+	if isUpgrading then return end
+	isUpgrading = true
 
-    for i = 1, 6 do
-        local target = settings.slots.upgrade[i]
-        if settings.slots.place[i] then
-            while true do
-                local current = getUnitUpgradeLevel(i)
-                if current >= target then break end
+	local player = game.Players.LocalPlayer
+	local playerGui = player:WaitForChild("PlayerGui")
+	local unitsFolder = player:WaitForChild("UnitsFolder")
 
-                local success = tryUpgradeSlot(i)
-                if success then
-                    task.wait(0.2)
-                else
-                    task.wait(1) -- chờ lâu hơn nếu không nâng được (thường do thiếu tiền)
-                end
-            end
-        end
-    end
+	-- Kiểm tra xem có đang ở màn chọn tướng trước trận không
+	local preGameUI = playerGui:FindFirstChild("HUD")
+		and playerGui.HUD:FindFirstChild("UnitSelectBeforeGameRunning_UI")
 
-    waitingForUpgrade = false
-    isUpgrading = false
+	if preGameUI then
+		isUpgrading = false
+		return
+	end
+
+	local function waitForGameEndToDisappear()
+		if not playerGui:FindFirstChild("GameEndedAnimationUI") then return false end
+
+		settings.autoUpgrade = false
+		saveSettings(settings)
+
+		while playerGui:FindFirstChild("GameEndedAnimationUI") do
+			task.wait(0.5)
+		end
+
+		settings.autoUpgrade = true
+		saveSettings(settings)
+		return true
+	end
+
+	local paused = waitForGameEndToDisappear()
+	if paused then task.wait(1) end
+
+	while true do
+		local anyNeedsUpgrade = false
+
+		for i = 1, 6 do
+			if settings.slots.place[i] then
+				local slot = playerGui:WaitForChild("UnitsLoadout"):WaitForChild("Main"):FindFirstChild("UnitLoadout"..i)
+				if slot then
+					local folderObj = slot:FindFirstChild("Frame") and slot.Frame:FindFirstChild("UnitFrame") and
+						slot.Frame.UnitFrame:FindFirstChild("Info") and slot.Frame.UnitFrame.Info:FindFirstChild("Folder")
+
+					if folderObj and folderObj:IsA("ObjectValue") and folderObj.Value then
+						local unitName = folderObj.Value.Name
+						local unitObject = unitsFolder:FindFirstChild(unitName)
+
+						if unitObject then
+							local level = unitObject:WaitForChild("Upgrade_Folder"):WaitForChild("Level").Value
+							local targetUpgrade = settings.slots.upgrade[i]
+
+							if level < targetUpgrade then
+								anyNeedsUpgrade = true
+								local didUpgrade = tryUpgradeSlot(i)
+								if didUpgrade then
+									task.wait(0.5)
+                                    break 
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+
+		-- Nếu tất cả đều đạt upgrade yêu cầu thì thoát vòng lặp
+		if not anyNeedsUpgrade then break end
+        task.wait(0.3)
+	end
+
+	isUpgrading = false
 end
-
-local function allUpgradesDone()
-    for i = 1, 6 do
-        if settings.slots.place[i] and getUnitUpgradeLevel(i) < settings.slots.upgrade[i] then
-            return false
-        end
-    end
-    return true
-end
-
 
 --send 
 local Players     = game:GetService("Players")
@@ -704,93 +739,6 @@ local function autoRoll()
     saveSettings(settings)
 end
 
---// Create Window
-local Window = MacLib:Window({
-    Title = "Pịa Hub",
-    Subtitle = "Vãi Pịa",
-    Size = UDim2.fromOffset(650, 400),
-    Keybind = Enum.KeyCode.RightControl,
-    AcrylicBlur = true,
-})
-
-local TabGroup = Window:TabGroup()
-local MainTab = TabGroup:Tab({ Name = "Main" })
-local AutoPlayTab = TabGroup:Tab({ Name = "Auto Play" })
-local WebhookTab = TabGroup:Tab({ Name = "Webhook" })
-local ShopTab = TabGroup:Tab({ Name = "Shop" })
-
---main
-local controlSection = MainTab:Section({ Side = "Left", Title = "Auto Options" })
-
-controlSection:Toggle({
-    Name = "Auto Start",
-    Default = settings.autoStart,
-    Callback = function(val)
-        settings.autoStart = val
-        saveSettings(settings)
-    end
-})
-
-controlSection:Toggle({
-    Name = "Auto Next",
-    Default = settings.autoNext,
-    Callback = function(val)
-        settings.autoNext = val
-        saveSettings(settings)
-    end
-})
-
-controlSection:Toggle({
-    Name = "Auto Retry",
-    Default = settings.autoRetry,
-    Callback = function(val)
-        settings.autoRetry = val
-        saveSettings(settings)
-    end
-})
-
-controlSection:Toggle({
-    Name = "Auto Leave",
-    Default = settings.autoLeave,
-    Callback = function(val)
-        settings.autoLeave = val
-        saveSettings(settings)
-    end
-})
-
-
--- Misc Section (bên trái Main Tab)
-local miscSection = MainTab:Section({ Side = "Left", Title = "Misc" })
-
-miscSection:Toggle({
-    Name = "Auto Claim Quest",
-    Default = settings.autoClaimQuest or false,
-    Callback = function(val)
-        settings.autoClaimQuest = val
-        saveSettings(settings)
-
-        if val then
-            task.spawn(function()
-                while settings.autoClaimQuest do
-                    local lobbyFolder = workspace:FindFirstChild("Lobby")
-
-                    if lobbyFolder and lobbyFolder:IsA("Folder") then
-                        local args = { "ClaimAll" }
-                        game:GetService("ReplicatedStorage")
-                            :WaitForChild("Remote")
-                            :WaitForChild("Server")
-                            :WaitForChild("Gameplay")
-                            :WaitForChild("QuestEvent")
-                            :FireServer(unpack(args))
-                    end
-
-                    task.wait(10) -- kiểm tra mỗi 10s
-                end
-            end)
-        end
-    end
-})
-
 --//roll traill
 local rerollConfig = {
     unit = nil,
@@ -857,6 +805,149 @@ function autoRollTrail(unitEntry, desiredTrails)
     end
 end
 
+--// Create Window
+local Window = MacLib:Window({
+    Title = "Pịa Hub",
+    Subtitle = "Vãi Pịa",
+    Size = UDim2.fromOffset(650, 400),
+    Keybind = Enum.KeyCode.RightControl,
+    AcrylicBlur = true,
+})
+
+local TabGroup = Window:TabGroup()
+local MainTab = TabGroup:Tab({ Name = "Main" })
+local AutoPlayTab = TabGroup:Tab({ Name = "Auto Play" })
+local WebhookTab = TabGroup:Tab({ Name = "Webhook" })
+local ShopTab = TabGroup:Tab({ Name = "Shop" })
+
+--main
+local controlSection = MainTab:Section({ Side = "Left", Title = "Auto Options" })
+
+controlSection:Toggle({
+    Name = "Auto Start",
+    Default = settings.autoStart,
+    Callback = function(val)
+        settings.autoStart = val
+        saveSettings(settings)
+    end
+})
+
+controlSection:Toggle({
+    Name = "Auto Next",
+    Default = settings.autoNext,
+    Callback = function(val)
+        settings.autoNext = val
+        saveSettings(settings)
+    end
+})
+
+controlSection:Toggle({
+    Name = "Auto Retry",
+    Default = settings.autoRetry,
+    Callback = function(val)
+        settings.autoRetry = val
+        saveSettings(settings)
+    end
+})
+
+controlSection:Toggle({
+    Name = "Auto Leave",
+    Default = settings.autoLeave,
+    Callback = function(val)
+        settings.autoLeave = val
+        saveSettings(settings)
+    end
+})
+
+--//auto load script
+controlSection:Toggle({
+    Name = "Auto Excute",
+    Default = settings.autoReloadOnTeleport or false,
+    Callback = function(val)
+        settings.autoReloadOnTeleport = val
+        saveSettings(settings)
+
+        if val then
+            queue_on_teleport([[
+                repeat task.wait() until game:IsLoaded()
+                loadstring(game:HttpGet('https://raw.githubusercontent.com/thaemmayanh/hub/refs/heads/main/arx.lua'))()
+            ]])
+        end
+    end
+})
+
+--//delete map
+controlSection:Toggle({
+    Name = "Delete Map",
+    Default = settings.deleteMap or false,
+    Callback = function(val)
+        settings.deleteMap = val
+        saveSettings(settings)
+
+        if val then
+            task.spawn(function()
+                local building = workspace:FindFirstChild("Building")
+                if not building then return end
+
+                local mapFolder = building:FindFirstChild("Map")
+                if not mapFolder then return end
+
+                -- 🔥 Xoá mọi thứ trong Building.Map.Map trừ Baseplate
+                local innerMap = mapFolder:FindFirstChild("Map")
+                if innerMap then
+                    for _, obj in ipairs(innerMap:GetChildren()) do
+                        if obj.Name ~= "Baseplate" then
+                            obj:Destroy()
+                        end
+                    end
+                end
+
+                -- 🔥 Xoá mọi thứ trong Building.Map.VFX trừ Baseplate
+                local vfxFolder = mapFolder:FindFirstChild("VFX")
+                if vfxFolder then
+                    for _, obj in ipairs(vfxFolder:GetChildren()) do
+                        if obj.Name ~= "Baseplate" then
+                            obj:Destroy()
+                        end
+                    end
+                end
+            end)
+        end
+    end
+})
+
+-- Misc Section (bên trái Main Tab)
+local miscSection = MainTab:Section({ Side = "Left", Title = "Misc" })
+
+miscSection:Toggle({
+    Name = "Auto Claim Quest",
+    Default = settings.autoClaimQuest or false,
+    Callback = function(val)
+        settings.autoClaimQuest = val
+        saveSettings(settings)
+
+        if val then
+            task.spawn(function()
+                while settings.autoClaimQuest do
+                    local lobbyFolder = workspace:FindFirstChild("Lobby")
+
+                    if lobbyFolder and lobbyFolder:IsA("Folder") then
+                        local args = { "ClaimAll" }
+                        game:GetService("ReplicatedStorage")
+                            :WaitForChild("Remote")
+                            :WaitForChild("Server")
+                            :WaitForChild("Gameplay")
+                            :WaitForChild("QuestEvent")
+                            :FireServer(unpack(args))
+                    end
+
+                    task.wait(10) -- kiểm tra mỗi 10s
+                end
+            end)
+        end
+    end
+})
+
 -- 📦 UI Section
 local section = MainTab:Section({ Side = "Right", Title = "Auto Ranger" })
 
@@ -896,6 +987,46 @@ section:Toggle({
     end
 })
 
+local challengeSection = MainTab:Section({ Side = "Right", Title = "Challenge" })
+
+challengeSection:Toggle({
+    Name = "Auto Join Challenge",
+    Default = settings.autoJoinChallenge or false,
+    Callback = function(val)
+        settings.autoJoinChallenge = val
+        saveSettings(settings)
+
+        if val then
+            task.spawn(function()
+                local PlayRoomEvent = game:GetService("ReplicatedStorage")
+                    :WaitForChild("Remote")
+                    :WaitForChild("Server")
+                    :WaitForChild("PlayRoom")
+                    :WaitForChild("Event")
+
+                while settings.autoJoinChallenge do
+                    -- Đảm bảo đang ở trong lobby
+                    if workspace:FindFirstChild("Lobby") then
+                        local args1 = {
+                            "Create",
+                            {
+                                CreateChallengeRoom = true
+                            }
+                        }
+                        PlayRoomEvent:FireServer(unpack(args1))
+
+                        task.wait(0.5)
+
+                        local args2 = { "Start" }
+                        PlayRoomEvent:FireServer(unpack(args2))
+                    end
+
+                    task.wait(3) -- delay để tránh spam server
+                end
+            end)
+        end
+    end
+})
 
 --// Left Side: Auto Toggles
 local leftSection = AutoPlayTab:Section({ Side = "Left", Title = "Auto Options" })
@@ -928,9 +1059,14 @@ leftSection:Toggle({
                         task.wait(1.5)
                     end
 
-                    -- Nếu bật Play After Upgrade → đợi upgrade xong
+                    -- Nếu bật Play After Upgrade → đợi upgrade xong trước khi deploy
                     if settings.playAfterUpgrade and settings.autoUpgrade then
-                        upgradeUnits()
+                        if not isUpgrading then
+                            upgradeUnits()
+                        end
+                        while isUpgrading do
+                            task.wait(0.2)
+                        end
                     end
 
                     deployUnits()
