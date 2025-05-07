@@ -24,10 +24,16 @@ while true do
 
         if not bought then
             -- Không mua được, chờ 20s rồi thử lại
-            wait(2)
+            wait(5)
         end
     else
         warn("⚠️ Không thể lấy dữ liệu từ DataService.")
-        wait(1)
+        wait(10)
     end
 end
+
+local vu = game:GetService("VirtualUser")
+game:GetService("Players").LocalPlayer.Idled:Connect(function()
+    vu:CaptureController()
+    vu:ClickButton2(Vector2.new(0, 0))
+end)
