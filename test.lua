@@ -2,8 +2,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local DataService = require(ReplicatedStorage.Modules.DataService)
 local BuyEggEvent = ReplicatedStorage.GameEvents.BuyPetEgg
 
-local eggName = "Common Egg"
-local waitTime = 1
+local eggName = "Bug Egg"
+local waitTime = 20
 
 while true do
     local success, result = pcall(function()
