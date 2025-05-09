@@ -444,15 +444,15 @@ local modeMap = {
 	["Insane"] = 4
 }
 
-local modeNames = {}
-for k, _ in pairs(modeMap) do
-	table.insert(modeNames, k)
+local modeNumberToName = {}
+for name, num in pairs(modeMap) do
+	modeNumberToName[num] = name
 end
 
 lobbySection:Dropdown({
 	Name = "Select Mode",
-	Default = "Normal", -- bạn có thể map lại từ số nếu cần
-	Options = modeNames,
+	Default = modeNumberToName[TweenSettings.SelectedMode] or "Normal",
+	Options = { "Normal", "Medium", "Hard", "Insane" },
 	Multi = false,
 	Callback = function(val)
 		TweenSettings.SelectedMode = modeMap[val]
