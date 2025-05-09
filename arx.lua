@@ -1,8 +1,8 @@
 repeat task.wait() until game:IsLoaded()
 
 -- 🧼 Xoá GUI cũ nếu tồn tại
-if getgenv()._PiaHubLoaded then return end
-getgenv()._PiaHubLoaded = true
+if getgenv()._PiaHubarxLoaded then return end
+getgenv()._PiaHubarxLoaded = true
 
 local vu = game:GetService("VirtualUser")
 game:GetService("Players").LocalPlayer.Idled:Connect(function()
@@ -744,7 +744,7 @@ local Window = MacLib:Window({
 })
 
 pcall(function()
-	window.Instance.Name = "PiaHubUI"
+	window.Instance.Name = "PiaHubUIarx"
 end)
 
 local TabGroup = Window:TabGroup()
