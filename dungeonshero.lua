@@ -286,7 +286,7 @@ local tab = window:TabGroup():Tab({ Name = "main" })
 local section = tab:Section({ Side = "Left", Title = "Auto Farm" })
 
 section:Slider({
-	Name = "Độ cao",
+	Name = "elevation",
 	Minimum = 1,
 	Maximum = 100,
 	Default = TweenSettings.Height,
@@ -298,7 +298,7 @@ section:Slider({
 })
 
 section:Slider({
-	Name = "Tốc độ tween",
+	Name = "Tween Speed",
 	Minimum = 1,
 	Maximum = 100,
 	Default = TweenSettings.Speed,
@@ -310,7 +310,7 @@ section:Slider({
 })
 
 section:Toggle({
-	Name = "Bật tween tới mob gần nhất",
+	Name = "Auto Farm",
 	Default = TweenSettings.FollowEnabled,
 	Callback = function(state)
 		TweenSettings.FollowEnabled = state
