@@ -21,12 +21,13 @@ if not isfolder(folderName .. "/" .. subFolder) then makefolder(folderName .. "/
 local settingPath = folderName .. "/" .. subFolder .. "/" .. settingFile
 local defaultSetting = {
 	Height = 50,
-	Speed = 100,
+	Speed = 50,
 	FollowEnabled = false,
 	KillAuraEnabled = false,
 	GoAgainEnabled = false,
 	AutoStartDungeon = false,
 	autoReloadOnTeleport = false,
+	ReturnEnabled = false,
 	}
 -- 📄 Hàm lưu / tải setting
 local function SaveSetting(tbl)
@@ -220,6 +221,28 @@ function StopGoAgain()
 	goAgainLoop = false
 end
 
+--// auto Leave
+function StartReturn()
+	if ReturnLoop then return end
+	ReturnLoop = true
+
+	task.spawn(function()
+		while ReturnLoop do
+			local remote = game:GetService("ReplicatedStorage")
+				:WaitForChild("Systems")
+				:WaitForChild("Dungeons")
+				:WaitForChild("SetExitChoice")
+
+			remote:FireServer("Return")
+			task.wait(3)
+		end
+	end)
+end
+
+function StopReturn()
+	ReturnLoop = false
+end
+
 -- 🖼️ Giao diện người dùng
 local MacLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/thaemmayanh/thaem/refs/heads/main/lib"))()
 
@@ -306,6 +329,21 @@ gameSection:Toggle({
 			StartGoAgain()
 		else
 			StopGoAgain()
+		end
+	end
+})
+
+gameSection:Toggle({
+	Name = "Auto Leave",
+	Default = TweenSettings.ReturnEnabled,
+	Callback = function(state)
+		TweenSettings.ReturnEnabled = state
+		SaveSetting(TweenSettings)
+
+		if state then
+			StartReturn()
+		else
+			StopReturn()
 		end
 	end
 })
