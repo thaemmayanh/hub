@@ -28,8 +28,12 @@ local defaultSetting = {
 	AutoStartDungeon = false,
 	autoReloadOnTeleport = false,
 	ReturnEnabled = false,
+	SelectedMap = "ForestDungeon",
+	SelectedMode = 1,
+	AutoJoinEnabled = false,
 	}
--- 📄 Hàm lưu / tải setting
+
+	-- 📄 Hàm lưu / tải setting
 local function SaveSetting(tbl)
 	writefile(settingPath, game:GetService("HttpService"):JSONEncode(tbl))
 end
@@ -243,13 +247,31 @@ function StopReturn()
 	ReturnLoop = false
 end
 
+--//auto join
+function TryAutoJoin()
+	if game.PlaceId ~= 94845773826960 then return end
+
+	local args = {
+		TweenSettings.SelectedMap or "ForestDungeon",
+		TweenSettings.SelectedMode or 1,
+		1,
+		true
+	}
+
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Systems")
+		:WaitForChild("Parties")
+		:WaitForChild("SetSettings")
+		:FireServer(unpack(args))
+end
+
 -- 🖼️ Giao diện người dùng
 local MacLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/thaemmayanh/thaem/refs/heads/main/lib"))()
 
 local window = MacLib:Window({
 	Title = "Pịa Hub",
 	Subtitle = "VÃI-PỊA",
-	Size = UDim2.fromOffset(700, 450),
+	Size = UDim2.fromOffset(750, 500),
 	Keybind = Enum.KeyCode.RightControl,
 	AcrylicBlur = true,
 	Scale = 0.7
@@ -381,4 +403,72 @@ gameSection:Toggle({
             ]])
         end
     end
+})
+
+local lobbySection = tab:Section({ Side = "Right", Title = "Lobby" })
+
+local mapOptions = {}
+
+local success, queueRings = pcall(function()
+	return workspace:WaitForChild("QueueRings", 1) -- chờ tối đa 3 giây
+end)
+
+if success and queueRings then
+	for _, model in ipairs(queueRings:GetChildren()) do
+		if model:IsA("Model") then
+			table.insert(mapOptions, model.Name)
+		end
+	end
+end
+
+-- fallback nếu không có map
+if #mapOptions == 0 then
+	mapOptions = { TweenSettings.SelectedMap or "ForestDungeon" }
+end
+
+lobbySection:Dropdown({
+	Name = "Select Map",
+	Default = TweenSettings.SelectedMap,
+	Options = mapOptions,
+	Multi = false,
+	Callback = function(val)
+		TweenSettings.SelectedMap = val
+		SaveSetting(TweenSettings)
+	end
+})
+
+local modeMap = {
+	["Normal"] = 1,
+	["Medium"] = 2,
+	["Hard"] = 3,
+	["Insane"] = 4
+}
+
+local modeNames = {}
+for k, _ in pairs(modeMap) do
+	table.insert(modeNames, k)
+end
+
+lobbySection:Dropdown({
+	Name = "Select Mode",
+	Default = "Normal", -- bạn có thể map lại từ số nếu cần
+	Options = modeNames,
+	Multi = false,
+	Callback = function(val)
+		TweenSettings.SelectedMode = modeMap[val]
+		SaveSetting(TweenSettings)
+	end
+})
+
+lobbySection:Toggle({
+	Name = "Auto Join",
+	Default = TweenSettings.AutoJoinEnabled,
+	Callback = function(state)
+		TweenSettings.AutoJoinEnabled = state
+		SaveSetting(TweenSettings)
+
+		if state then
+			TryAutoJoin()
+		end
+	end
 })
