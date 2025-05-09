@@ -1,13 +1,7 @@
 repeat task.wait() until game:IsLoaded()
 
--- 🧼 Xoá GUI cũ nếu tồn tại
-local CoreGui = game:GetService("CoreGui")
-
-for _, gui in ipairs(CoreGui:GetChildren()) do
-	if gui:IsA("ScreenGui") and (gui.Name == "MacLib" or gui.Name == "ScreenGui") then
-		gui:Destroy()
-	end
-end
+if getgenv()._PiaHubLoaded then return end
+getgenv()._PiaHubLoaded = true
 
 -- 💤 Anti-AFK
 local vu = game:GetService("VirtualUser")
@@ -32,6 +26,7 @@ local defaultSetting = {
 	KillAuraEnabled = false,
 	GoAgainEnabled = false,
 	AutoStartDungeon = false,
+	autoReloadOnTeleport = false,
 	}
 -- 📄 Hàm lưu / tải setting
 local function SaveSetting(tbl)
@@ -229,11 +224,17 @@ end
 local MacLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/thaemmayanh/thaem/refs/heads/main/lib"))()
 
 local window = MacLib:Window({
-	Title = "vãi-pịa",
-	Subtitle = "pịa hub",
+	Title = "Pịa Hub",
+	Subtitle = "VÃI-PỊA",
 	Keybind = Enum.KeyCode.RightControl,
-	AcrylicBlur = true
+	AcrylicBlur = true,
+	Scale = 0.7
 })
+
+-- Nếu MacLib tạo ScreenGui tên "MacLib", bạn có thể rename lại:
+pcall(function()
+	window.Instance.Name = "PiaHubUI"
+end)
 
 local tab = window:TabGroup():Tab({ Name = "main" })
 local section = tab:Section({ Side = "Left", Title = "Auto Farm" })
@@ -325,4 +326,20 @@ gameSection:Toggle({
 			remote:FireServer()
 		end
 	end
+})
+
+gameSection:Toggle({
+    Name = "Auto Execute",
+    Default = TweenSettings.autoReloadOnTeleport or false,
+    Callback = function(val)
+        TweenSettings.autoReloadOnTeleport = val
+        SaveSetting(TweenSettings)
+
+        if val then
+            queue_on_teleport([[
+                repeat task.wait() until game:IsLoaded()
+                loadstring(game:HttpGet('https://raw.githubusercontent.com/thaemmayanh/hub/refs/heads/main/dungeonshero.lua'))()
+            ]])
+        end
+    end
 })
