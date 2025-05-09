@@ -286,7 +286,7 @@ local tab = window:TabGroup():Tab({ Name = "main" })
 local section = tab:Section({ Side = "Left", Title = "Auto Farm" })
 
 section:Slider({
-	Name = "Elevation",
+	Name = "Độ cao",
 	Minimum = 1,
 	Maximum = 100,
 	Default = TweenSettings.Height,
@@ -298,7 +298,7 @@ section:Slider({
 })
 
 section:Slider({
-	Name = "Tween Speed",
+	Name = "Tốc độ tween",
 	Minimum = 1,
 	Maximum = 100,
 	Default = TweenSettings.Speed,
@@ -407,32 +407,32 @@ gameSection:Toggle({
 
 local lobbySection = tab:Section({ Side = "Right", Title = "Lobby" })
 
-local mapOptions = {}
+local mapDisplayToInternal = {
+	["Shattered Forest"] = "ForestDungeon",
+	["Orion Peak"] = "MountainDungeon",
+	["Deadman Cove"] = "CoveDungeon",
+	["Flaming Depths"] = "CastleDungeon",
+	["Mosscrown Jungle"] = "JungleDungeon",
+	["Astal Abyss"] = "AstralDungeon",
+}
 
-local success, queueRings = pcall(function()
-	return workspace:WaitForChild("QueueRings", 1) -- chờ tối đa 3 giây
-end)
-
-if success and queueRings then
-	for _, model in ipairs(queueRings:GetChildren()) do
-		if model:IsA("Model") then
-			table.insert(mapOptions, model.Name)
-		end
-	end
+local mapInternalToDisplay = {}
+for k, v in pairs(mapDisplayToInternal) do
+	mapInternalToDisplay[v] = k
 end
 
--- fallback nếu không có map
-if #mapOptions == 0 then
-	mapOptions = { TweenSettings.SelectedMap or "ForestDungeon" }
+local mapNames = {}
+for displayName in pairs(mapDisplayToInternal) do
+	table.insert(mapNames, displayName)
 end
 
 lobbySection:Dropdown({
 	Name = "Select Map",
-	Default = TweenSettings.SelectedMap,
-	Options = mapOptions,
+	Default = mapInternalToDisplay[TweenSettings.SelectedMap] or "Shattered Forest",
+	Options = mapNames,
 	Multi = false,
 	Callback = function(val)
-		TweenSettings.SelectedMap = val
+		TweenSettings.SelectedMap = mapDisplayToInternal[val]
 		SaveSetting(TweenSettings)
 	end
 })
