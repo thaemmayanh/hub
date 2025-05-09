@@ -1,13 +1,8 @@
 repeat task.wait() until game:IsLoaded()
 
 -- 🧼 Xoá GUI cũ nếu tồn tại
-local CoreGui = game:GetService("CoreGui")
-
-for _, gui in ipairs(CoreGui:GetChildren()) do
-    if gui:IsA("ScreenGui") and (gui.Name == "MacLib" or gui.Name == "ScreenGui") then
-        gui:Destroy()
-    end
-end
+if getgenv()._PiaHubLoaded then return end
+getgenv()._PiaHubLoaded = true
 
 local vu = game:GetService("VirtualUser")
 game:GetService("Players").LocalPlayer.Idled:Connect(function()
@@ -747,6 +742,10 @@ local Window = MacLib:Window({
     Keybind = Enum.KeyCode.RightControl,
     AcrylicBlur = true,
 })
+
+pcall(function()
+	window.Instance.Name = "PiaHubUI"
+end)
 
 local TabGroup = Window:TabGroup()
 local MainTab = TabGroup:Tab({ Name = "Main" })
