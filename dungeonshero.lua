@@ -249,6 +249,7 @@ local MacLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/thaemm
 local window = MacLib:Window({
 	Title = "Pịa Hub",
 	Subtitle = "VÃI-PỊA",
+	Size = UDim2.fromOffset(650, 400),
 	Keybind = Enum.KeyCode.RightControl,
 	AcrylicBlur = true,
 	Scale = 0.7
