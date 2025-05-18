@@ -44,6 +44,7 @@ local defaultSettings = {
     autoReloadOnTeleport = false,
     autoJoinChallenge = false,
     deleteMap = false,
+	autoBuLiem = false,
 }
 
 local function loadSettings()
@@ -195,6 +196,12 @@ local ActMapping = {
     OPM_RangerStage1 = "Z City Act 1",
     OPM_RangerStage2 = "Z City Act 2",
     OPM_RangerStage3 = "Z City Act 3",
+
+    TokyoGhoul_RangerStage1 = "Goul Act 1",
+    TokyoGhoul_RangerStage2 = "Goul Act 2",
+    TokyoGhoul_RangerStage3 = "Goul Act 3",
+    TokyoGhoul_RangerStage4 = "Goul Act 4",	
+    TokyoGhoul_RangerStage5 = "Goul Act 5",
 }
 
 local function getActKeyFromLabel(label, mapKey)
@@ -734,6 +741,61 @@ local function autoRoll()
     saveSettings(settings)
 end
 
+--//auto bú liếm
+local function autoBuLiemFunc()
+    local Players = game:GetService("Players")
+    local player = Players.LocalPlayer
+
+    local function getCharacter()
+        local char = player.Character or player.CharacterAdded:Wait()
+        while not char:FindFirstChild("HumanoidRootPart") do
+            char.ChildAdded:Wait()
+        end
+        return char
+    end
+
+    local function getAllParts(folder)
+        local parts = {}
+        for _, obj in ipairs(folder:GetChildren()) do
+            if obj:IsA("Part") then
+                table.insert(parts, obj)
+            end
+        end
+        return parts
+    end
+
+    local function activatePrompt(prompt)
+        for i = 1, 10 do -- chỉ gọi trong 1s, tránh spam
+            if prompt:IsA("ProximityPrompt") then
+                fireproximityprompt(prompt)
+            end
+            task.wait(0.1)
+        end
+    end
+
+    task.spawn(function()
+        local character = getCharacter()
+        local hrp = character:WaitForChild("HumanoidRootPart")
+
+        while settings.autoBuLiem do
+            local portalFolder = workspace:FindFirstChild("Portal")
+            if portalFolder then
+                local parts = getAllParts(portalFolder)
+                if #parts > 0 then
+                    local selectedPart = parts[math.random(1, #parts)]
+                    hrp.CFrame = selectedPart.CFrame + Vector3.new(0, 5, 0)
+
+                    local prompt = selectedPart:FindFirstChildOfClass("ProximityPrompt")
+                    if prompt then
+                        activatePrompt(prompt)
+                    end
+                end
+            end
+            task.wait(1) -- delay 1s mỗi vòng
+        end
+    end)
+end
+
 --// Create Window
 local Window = MacLib:Window({
     Title = "Pịa Hub",
@@ -752,6 +814,7 @@ local MainTab = TabGroup:Tab({ Name = "Main" })
 local AutoPlayTab = TabGroup:Tab({ Name = "Auto Play" })
 local WebhookTab = TabGroup:Tab({ Name = "Webhook" })
 local ShopTab = TabGroup:Tab({ Name = "Shop" })
+local PortalTab = TabGroup:Tab({ Name = "Portal" }) -- ID icon có thể thay
 
 --main
 local controlSection = MainTab:Section({ Side = "Left", Title = "Auto Options" })
@@ -1406,6 +1469,21 @@ trailRerollSection:Toggle({
         else
             print("⛔ Dừng roll trail")
             -- Gắn logic dừng tại đây nếu có
+        end
+    end
+})
+
+local buliemSection = PortalTab:Section({ Side = "Left", Title = "thánh bú liếm" })
+
+buliemSection:Toggle({
+    Name = "Auto bú liếm",
+    Default = settings.autoBuLiem or false,
+    Callback = function(val)
+        settings.autoBuLiem = val
+        saveSettings(settings)
+
+        if val then
+            task.spawn(autoBuLiemFunc)
         end
     end
 })
