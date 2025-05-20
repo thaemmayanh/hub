@@ -45,6 +45,7 @@ local defaultSettings = {
     autoJoinChallenge = false,
     deleteMap = false,
 	autoBuLiem = false,
+    autoRejoin = false,
 }
 
 local function loadSettings()
@@ -261,6 +262,128 @@ function runAutoRanger()
             task.wait(0.5)
         end
     end)
+end
+
+--// auto rejoin
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+
+local PlayRoomEvent = ReplicatedStorage:WaitForChild("Remote"):WaitForChild("Server"):WaitForChild("PlayRoom"):WaitForChild("Event")
+
+local MapLabelToName = {
+    ["Voocha Village"] = "OnePiece",
+    ["Green Planet"] = "Namek",
+    ["Demon Forest"] = "DemonSlayer",
+    ["Leaf Village"] = "Naruto",
+    ["Z City"] = "OPM",
+    ["Ghoul City"] = "TokyoGhoul",
+}
+
+-- Hàm parse map và chapter từ GUI text
+local function parseMapChapterFromGui(guiText)
+    local mapLabel, chapterLabel = guiText:match("^%s*(.-)%s*%-%s*(Chapter%s*%d+)%s*$")
+    if not mapLabel or not chapterLabel then
+        return nil, nil
+    end
+
+    local mapKey = MapLabelToName[mapLabel]
+    if not mapKey then
+        return nil, nil
+    end
+
+    local chapterNum = chapterLabel:match("Chapter%s*(%d+)")
+    if not chapterNum then
+        return nil, nil
+    end
+
+    local chapterKey = mapKey .. "_Chapter" .. chapterNum
+
+    return mapKey, chapterKey
+end
+
+-- Hàm tạo phòng tự động theo GUI text
+local function autoCreateRoomFromGui()
+    if workspace:FindFirstChild("Lobby") then
+        return  -- Đang trong lobby, không chạy
+    end
+
+    local guiLabel = LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("HUD"):WaitForChild("InGame"):WaitForChild("Main")
+                    :WaitForChild("GameInfo"):WaitForChild("Stage"):WaitForChild("Label")
+
+    local guiText = guiLabel.Text
+
+    local mapKey, chapterKey = parseMapChapterFromGui(guiText)
+    if not mapKey or not chapterKey then return end
+
+    PlayRoomEvent:FireServer("Create")
+    task.wait(0.2)
+
+    PlayRoomEvent:FireServer("Change-World", { World = mapKey })
+    task.wait(0.2)
+
+    PlayRoomEvent:FireServer("Change-Chapter", { Chapter = chapterKey })
+    task.wait(0.2)
+
+    PlayRoomEvent:FireServer("Submit")
+    task.wait(0.2)
+
+    PlayRoomEvent:FireServer("Start")
+end
+
+-- Hàm lấy uptime server (giây)
+local serverStartTime = os.time()
+
+local function getServerUptime()
+    return os.time() - serverStartTime
+end
+
+-- Hàm check FPS trung bình trong 1 giây
+local function checkFPS(durationSeconds)
+    local frameCount = 0
+    local startTime = tick()
+
+    local conn
+    local fps = 0
+
+    conn = RunService.Heartbeat:Connect(function()
+        frameCount = frameCount + 1
+    end)
+
+    task.wait(durationSeconds)
+
+    conn:Disconnect()
+
+    local elapsed = tick() - startTime
+    if elapsed > 0 then
+        fps = frameCount / elapsed
+    end
+
+    return fps
+end
+
+-- Vòng lặp kiểm tra FPS và rejoin nếu cần
+local function fpsMonitorLoop()
+    while settings.autoRejoin do
+        -- Nếu đang trong Lobby thì không làm gì, đợi lobby biến mất
+        if workspace:FindFirstChild("Lobby") then
+            task.wait(5)
+        else
+            local uptime = getServerUptime()
+            if uptime >= 8000 then  -- 3 tiếng = 10800 giây
+                local fps = checkFPS(1)
+                if fps <= 10 then
+                    pcall(autoCreateRoomFromGui)
+                    task.wait(15)
+                else
+                    task.wait(10)
+                end
+            else
+                task.wait(30)
+            end
+        end
+    end
 end
 
 --// Logic: Get and Deploy Units
@@ -1020,6 +1143,21 @@ challengeSection:Toggle({
                     task.wait(3) -- delay để tránh spam server
                 end
             end)
+        end
+    end
+})
+
+-- Toggle UI phần Auto Rejoin trong tab Main, cột phải
+local autoRejoinSection = MainTab:Section({ Side = "Right", Title = "Auto Rejoin" })
+
+autoRejoinSection:Toggle({
+    Name = "Auto Rejoin When FPS Drop",
+    Default = settings.autoRejoin or false,
+    Callback = function(val)
+        settings.autoRejoin = val
+        saveSettings(settings)
+        if val then
+            task.spawn(fpsMonitorLoop)
         end
     end
 })
