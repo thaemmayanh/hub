@@ -46,6 +46,8 @@ local defaultSettings = {
     deleteMap = false,
 	autoBuLiem = false,
     autoRejoin = false,
+    autoJoinPortal = false,
+    selectedPortals = {},
 }
 
 local function loadSettings()
@@ -62,6 +64,36 @@ local function saveSettings(tbl)
 end
 
 local settings = loadSettings()
+
+--realclcick
+local Players = game:GetService("Players")
+local GuiService = game:GetService("GuiService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local LocalPlayer = Players.LocalPlayer
+
+-- 🖱 Click thật giữa màn hình
+local function clickScreen()
+	local viewport = workspace.CurrentCamera.ViewportSize
+	local x = viewport.X / 2
+	local y = viewport.Y / 2
+	VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 0)
+	VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 0)
+end
+
+-- 🕹 Native click nút (bật viền + Enter)
+local function nativeClick(button)
+	if not button or not button:IsA("GuiButton") then return end
+	if not button.Visible or not button.Active then return end
+	if button.Name == "Retry" and button.Text:match("0/") then return end
+
+	GuiService.SelectedObject = button
+
+	VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Return, false, game)
+	VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Return, false, game)
+
+	task.wait(0.3)
+	GuiService.SelectedObject = nil
+end
 
 --realclcick
 local Players = game:GetService("Players")
@@ -113,20 +145,145 @@ local function handleGameEndedUI()
 
 	if not success or not buttonContainer then return end
 
-	-- 🔁 Thực hiện click các nút phù hợp
+	-- 🔁 Thực hiện click các nút theo ưu tiên
 	repeat
-		if settings.autoRetry then
-			nativeClick(buttonContainer:FindFirstChild("Retry"))
+		local clicked = false
+
+		local retryBtn = buttonContainer:FindFirstChild("Retry")
+		local nextBtn = buttonContainer:FindFirstChild("Next")
+		local leaveBtn = buttonContainer:FindFirstChild("Leave")
+
+		-- Helper hàm check toggle
+		local ar, an, al = settings.autoRetry, settings.autoNext, settings.autoLeave
+
+		if ar and an and al then
+			-- Bật cả 3: Next → đợi 1s → Leave → đợi 1s → Retry
+			if nextBtn and nextBtn.Visible and nextBtn.Active then
+				nativeClick(nextBtn)
+				clicked = true
+				task.wait(1)
+			end
+			if leaveBtn and leaveBtn.Visible and leaveBtn.Active then
+				nativeClick(leaveBtn)
+				clicked = true
+				task.wait(1)
+			end
+			if retryBtn and retryBtn.Visible and retryBtn.Active then
+				nativeClick(retryBtn)
+				clicked = true
+				task.wait(1)
+			end
+
+		elseif an and ar and not al then
+			-- Next và Retry: Retry → đợi 1s → Next
+			if retryBtn and retryBtn.Visible and retryBtn.Active then
+				nativeClick(retryBtn)
+				clicked = true
+				task.wait(1)
+			end
+			if nextBtn and nextBtn.Visible and nextBtn.Active then
+				nativeClick(nextBtn)
+				clicked = true
+				task.wait(1)
+			end
+
+		elseif an and al and not ar then
+			-- Next và Leave: Next → đợi 1s → Leave
+			if nextBtn and nextBtn.Visible and nextBtn.Active then
+				nativeClick(nextBtn)
+				clicked = true
+				task.wait(1)
+			end
+			if leaveBtn and leaveBtn.Visible and leaveBtn.Active then
+				nativeClick(leaveBtn)
+				clicked = true
+				task.wait(1)
+			end
+
+		elseif al and ar and not an then
+			-- Leave và Retry: Retry → đợi 1s → Leave
+			if retryBtn and retryBtn.Visible and retryBtn.Active then
+				nativeClick(retryBtn)
+				clicked = true
+				task.wait(1)
+			end
+			if leaveBtn and leaveBtn.Visible and leaveBtn.Active then
+				nativeClick(leaveBtn)
+				clicked = true
+				task.wait(1)
+			end
+
+		else
+			-- Trường hợp chỉ bật 1 hoặc nhiều nút đơn lẻ (không cùng cặp bên trên)
+			if an and nextBtn and nextBtn.Visible and nextBtn.Active then
+				nativeClick(nextBtn)
+				clicked = true
+			end
+			if al and leaveBtn and leaveBtn.Visible and leaveBtn.Active then
+				nativeClick(leaveBtn)
+				clicked = true
+			end
+			if ar and retryBtn and retryBtn.Visible and retryBtn.Active then
+				nativeClick(retryBtn)
+				clicked = true
+			end
 		end
-		if settings.autoNext then
-			nativeClick(buttonContainer:FindFirstChild("Next"))
-		end
-		if settings.autoLeave then
-			nativeClick(buttonContainer:FindFirstChild("Leave"))
-		end
+
 		task.wait(0.5)
+
+		if not playerGui:FindFirstChild("GameEndedAnimationUI") then break end
+		if not clicked then task.wait(0.5) end
+
 	until not playerGui:FindFirstChild("GameEndedAnimationUI")
 end
+
+task.spawn(function()
+	local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+	local existing = playerGui:FindFirstChild("GameEndedAnimationUI")
+	if existing then
+		task.wait(1)
+		handleGameEndedUI()
+	end
+
+	playerGui.ChildAdded:Connect(function(child)
+		if child:IsA("ScreenGui") and child.Name == "GameEndedAnimationUI" then
+			task.wait(1)
+			handleGameEndedUI()
+		end
+	end)
+end)
+
+task.spawn(function()
+	while true do
+		local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+		local endUI = playerGui and playerGui:FindFirstChild("GameEndedAnimationUI")
+		local ready = endUI and not LocalPlayer:FindFirstChild("Summon_Maximum")
+
+		if ready and (settings.autoRetry or settings.autoNext or settings.autoLeave) then
+			handleGameEndedUI()
+			repeat task.wait(0.5) until not playerGui:FindFirstChild("GameEndedAnimationUI")
+		end
+
+		task.wait(1)
+	end
+end)
+
+task.spawn(function()
+    local hasFired = false
+
+    while true do
+        if settings.autoStart and not workspace:FindFirstChild("Lobby") and not hasFired then
+            task.wait(2) -- đợi 2s sau khi vào trận
+            game.ReplicatedStorage.Remote.Server.OnGame.Voting.VotePlaying:FireServer()
+            hasFired = true
+        elseif workspace:FindFirstChild("Lobby") then
+            -- reset lại nếu quay về lobby (sẵn sàng cho trận sau)
+            hasFired = false
+        end
+
+        task.wait(1)
+    end
+end)
 
 task.spawn(function()
 	local playerGui = LocalPlayer:WaitForChild("PlayerGui")
@@ -281,49 +438,66 @@ local MapLabelToName = {
     ["Ghoul City"] = "TokyoGhoul",
 }
 
--- Hàm parse map và chapter từ GUI text
-local function parseMapChapterFromGui(guiText)
-    local mapLabel, chapterLabel = guiText:match("^%s*(.-)%s*%-%s*(Chapter%s*%d+)%s*$")
-    if not mapLabel or not chapterLabel then
-        return nil, nil
+-- Hàm lấy info map/chapter/difficulty từ GameEndedAnimationUI
+local function getGameEndedInfo()
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if not playerGui then return nil end
+
+    local endedUI = playerGui:FindFirstChild("RewardsUI")
+    if not endedUI then return nil end
+
+    local mainFrame = endedUI:FindFirstChild("Main")
+    if not mainFrame then return nil end
+
+    local leftSide = mainFrame:FindFirstChild("LeftSide")
+    if not leftSide then return nil end
+
+    local worldText = ""
+    local chapterText = ""
+    local difficultyText = ""
+
+    if leftSide:FindFirstChild("World") and leftSide.World:IsA("TextLabel") then
+        worldText = leftSide.World.Text
     end
 
-    local mapKey = MapLabelToName[mapLabel]
-    if not mapKey then
-        return nil, nil
+    if leftSide:FindFirstChild("Chapter") and leftSide.Chapter:IsA("TextLabel") then
+        chapterText = leftSide.Chapter.Text
     end
 
-    local chapterNum = chapterLabel:match("Chapter%s*(%d+)")
-    if not chapterNum then
-        return nil, nil
+    if leftSide:FindFirstChild("Difficulty") and leftSide.Difficulty:IsA("TextLabel") then
+        difficultyText = leftSide.Difficulty.Text
     end
 
-    local chapterKey = mapKey .. "_Chapter" .. chapterNum
+    local mapKey = MapLabelToName[worldText] or nil
+    local chapterNum = chapterText and chapterText:match("Chapter%s*(%d+)") or nil
+    local chapterKey = (mapKey and chapterNum) and (mapKey .. "_Chapter" .. chapterNum) or nil
 
-    return mapKey, chapterKey
+    if not mapKey or not chapterKey or not difficultyText then
+        return nil
+    end
+
+    return {
+        MapKey = mapKey,
+        ChapterKey = chapterKey,
+        Difficulty = difficultyText
+    }
 end
 
--- Hàm tạo phòng tự động theo GUI text
-local function autoCreateRoomFromGui()
-    if workspace:FindFirstChild("Lobby") then
-        return  -- Đang trong lobby, không chạy
-    end
-
-    local guiLabel = LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("HUD"):WaitForChild("InGame"):WaitForChild("Main")
-                    :WaitForChild("GameInfo"):WaitForChild("Stage"):WaitForChild("Label")
-
-    local guiText = guiLabel.Text
-
-    local mapKey, chapterKey = parseMapChapterFromGui(guiText)
-    if not mapKey or not chapterKey then return end
+-- Hàm tạo phòng theo thông tin đã lấy
+local function autoCreateRoom(info)
+    if not info then return end
+    if workspace:FindFirstChild("Lobby") then return end
 
     PlayRoomEvent:FireServer("Create")
     task.wait(0.2)
 
-    PlayRoomEvent:FireServer("Change-World", { World = mapKey })
+    PlayRoomEvent:FireServer("Change-World", { World = info.MapKey })
     task.wait(0.2)
 
-    PlayRoomEvent:FireServer("Change-Chapter", { Chapter = chapterKey })
+    PlayRoomEvent:FireServer("Change-Chapter", { Chapter = info.ChapterKey })
+    task.wait(0.2)
+
+    PlayRoomEvent:FireServer("Change-Difficulty", { Difficulty = info.Difficulty })
     task.wait(0.2)
 
     PlayRoomEvent:FireServer("Submit")
@@ -332,22 +506,35 @@ local function autoCreateRoomFromGui()
     PlayRoomEvent:FireServer("Start")
 end
 
--- Hàm lấy uptime server (giây)
+-- Biến lưu info mới nhất khi game end
+local latestGameInfo = nil
+
+-- Lắng nghe UI GameEndedAnimationUI để cập nhật info khi game kết thúc
+LocalPlayer.PlayerGui.ChildAdded:Connect(function(gui)
+    if gui.Name == "GameEndedAnimationUI" then
+        task.wait(2) -- đợi UI load đủ
+        latestGameInfo = getGameEndedInfo()
+        if latestGameInfo then
+            print("Cập nhật info mới:", latestGameInfo.MapKey, latestGameInfo.ChapterKey, latestGameInfo.Difficulty)
+        else
+            print("Không lấy được info từ RewardsUI")
+        end
+    end
+end)
+
+-- Lấy thời gian bắt đầu server
 local serverStartTime = os.time()
 
 local function getServerUptime()
     return os.time() - serverStartTime
 end
 
--- Hàm check FPS trung bình trong 1 giây
+-- Hàm check FPS trung bình trong khoảng thời gian durationSeconds (ví dụ 1 giây)
 local function checkFPS(durationSeconds)
     local frameCount = 0
     local startTime = tick()
 
-    local conn
-    local fps = 0
-
-    conn = RunService.Heartbeat:Connect(function()
+    local conn = RunService.Heartbeat:Connect(function()
         frameCount = frameCount + 1
     end)
 
@@ -357,24 +544,26 @@ local function checkFPS(durationSeconds)
 
     local elapsed = tick() - startTime
     if elapsed > 0 then
-        fps = frameCount / elapsed
+        return frameCount / elapsed
+    else
+        return 0
     end
-
-    return fps
 end
 
--- Vòng lặp kiểm tra FPS và rejoin nếu cần
+-- Vòng lặp giám sát FPS và tự động rejoin khi FPS tụt thấp và server đã chạy đủ 3 tiếng
 local function fpsMonitorLoop()
     while settings.autoRejoin do
-        -- Nếu đang trong Lobby thì không làm gì, đợi lobby biến mất
         if workspace:FindFirstChild("Lobby") then
             task.wait(5)
         else
             local uptime = getServerUptime()
-            if uptime >= 8000 then  -- 3 tiếng = 10800 giây
+            if uptime >= 1000 then -- 3 tiếng = 10800 giây
                 local fps = checkFPS(1)
-                if fps <= 10 then
-                    pcall(autoCreateRoomFromGui)
+                if fps <= 10 and latestGameInfo then
+                    print("FPS tụt, tiến hành rejoin...")
+                    pcall(function()
+                        autoCreateRoom(latestGameInfo)
+                    end)
                     task.wait(15)
                 else
                     task.wait(10)
@@ -917,6 +1106,64 @@ local function autoBuLiemFunc()
             task.wait(1) -- delay 1s mỗi vòng
         end
     end)
+end
+
+--//auto join portal
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local RemoteItemUse = ReplicatedStorage:WaitForChild("Remote"):WaitForChild("Server"):WaitForChild("Lobby"):WaitForChild("ItemUse")
+local RemotePortalEvent = ReplicatedStorage:WaitForChild("Remote"):WaitForChild("Server"):WaitForChild("Lobby"):WaitForChild("PortalEvent")
+
+function autoJoinPortalLoop()
+    while settings.autoJoinPortal do
+        -- Chỉ chạy khi đang ở lobby
+        if not workspace:FindFirstChild("Lobby") then
+            task.wait(1)
+        else
+            local playerData = ReplicatedStorage:FindFirstChild("Player_Data")
+            if not playerData then
+                task.wait(1)
+                continue
+            end
+
+            local clone = playerData:FindFirstChild(LocalPlayer.Name)
+            if not clone then
+                task.wait(1)
+                continue
+            end
+
+            local items = clone:FindFirstChild("Items")
+            if not items then
+                task.wait(1)
+                continue
+            end
+
+            for _, portalName in ipairs(settings.selectedPortals) do
+                local portalItem = items:FindFirstChild(portalName)
+                if portalItem then
+                    -- Mở portal
+                    local argsUse = { portalItem }
+                    pcall(function()
+                        RemoteItemUse:FireServer(unpack(argsUse))
+                    end)
+
+                    task.wait(1) -- đợi 1 giây
+
+                    -- Bắt đầu portal
+                    local argsStart = { "Start" }
+                    pcall(function()
+                        RemotePortalEvent:FireServer(unpack(argsStart))
+                    end)
+
+                    task.wait(3) -- đợi portal chạy xong
+                end
+            end
+
+            task.wait(2)
+        end
+    end
 end
 
 --// Create Window
@@ -1611,6 +1858,8 @@ trailRerollSection:Toggle({
     end
 })
 
+--portal tab
+--auto bú liếm
 local buliemSection = PortalTab:Section({ Side = "Left", Title = "thánh bú liếm" })
 
 buliemSection:Toggle({
@@ -1622,6 +1871,45 @@ buliemSection:Toggle({
 
         if val then
             task.spawn(autoBuLiemFunc)
+        end
+    end
+})
+
+--auto join portal
+local portalSection = PortalTab:Section({ Side = "Left", Title = "Auto Join Portal" })
+
+local portalOptions = {
+    "Ghoul City Portal I",
+    "Ghoul City Portal II",
+    "Ghoul City Portal III"
+}
+
+portalSection:Dropdown({
+    Name = "Select Portal",
+    Multi = true,
+    Options = portalOptions,
+    Default = settings.selectedPortals or {},
+    Callback = function(selectedDict)
+        local selectedArray = {}
+        for key, val in pairs(selectedDict) do
+            if val then
+                table.insert(selectedArray, key)
+            end
+        end
+        settings.selectedPortals = selectedArray
+        saveSettings(settings)
+    end
+})
+
+portalSection:Toggle({
+    Name = "Auto Join",
+    Default = settings.autoJoinPortal or false,
+    Callback = function(val)
+        settings.autoJoinPortal = val
+        saveSettings(settings)
+
+        if val then
+            task.spawn(autoJoinPortalLoop)
         end
     end
 })
