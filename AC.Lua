@@ -72,7 +72,7 @@ local spawnRemote = ReplicatedStorage
 -- Biến điều khiển
 local Recording = false
 local MacroData = {}
-local pendingRecord = nil
+local pendingRecords = {}
 
 ----------------------------------------------------------------
 -- Hàm phụ trợ
@@ -88,7 +88,7 @@ local function tableToVec(t)
     return Vector3.new(t.x, t.y, t.z)
 end
 
--- Lấy tiền hiện có
+-- Lấy tiền hiện có từ resource
 local function getCurrentMoney()
     local stats = LocalPlayer:FindFirstChild("_stats")
     if stats and stats:FindFirstChild("resource") then
@@ -108,16 +108,16 @@ local moneyFolder = PlayerGui:WaitForChild("spawn_units")
     :WaitForChild("Money")
 
 moneyFolder.ChildAdded:Connect(function(child)
-    if child.Name == "MoneyChange" and pendingRecord then
+    if child.Name == "MoneyChange" and #pendingRecords > 0 then
         local textObj = child:WaitForChild("text", 1)
         if textObj then
             local raw = textObj.Text
             local clean = raw:gsub("%+", ""):gsub("[^%d%-]", "")
             local num = tonumber(clean) or 0
             if num < 0 then
-                pendingRecord.Cost = -num
-                warn(("💸 Recorded %s | Cost %d"):format(pendingRecord.UnitId, pendingRecord.Cost))
-                pendingRecord = nil
+                -- lấy record đầu tiên trong queue
+                local rec = table.remove(pendingRecords, 1)
+                rec.Cost = -num
             end
         end
     end
@@ -143,7 +143,7 @@ mt.__namecall = function(self, ...)
             Cost      = 0 -- cập nhật sau khi MoneyChange xuất hiện
         }
         table.insert(MacroData, recordEntry)
-        pendingRecord = recordEntry
+        table.insert(pendingRecords, recordEntry)
     end
 
     return oldNamecall(self, ...)
@@ -154,48 +154,30 @@ setreadonly(mt, true)
 -- Save & Load MacroData
 ----------------------------------------------------------------
 local function saveMacroData(macroName)
-    if macroName == "" then
-        warn("⚠️ Chưa chọn macro để lưu")
-        return
-    end
+    if macroName == "" then return end
     local path = macroFolder.."/"..macroName..".json"
     writefile(path, HttpService:JSONEncode(MacroData))
-    warn(("💾 Đã lưu macro %s | Jobs: %d"):format(macroName, #MacroData))
 end
 
 local function loadMacroData(macroName)
     local path = macroFolder.."/"..macroName..".json"
-    if not isfile(path) then
-        warn("⚠️ Macro chưa tồn tại:", macroName)
-        return {}
-    end
+    if not isfile(path) then return {} end
     local ok, data = pcall(function()
         return HttpService:JSONDecode(readfile(path))
     end)
-    if ok and data then
-        return data
-    else
-        return {}
-    end
+    if ok and data then return data else return {} end
 end
 
 ----------------------------------------------------------------
 -- Play Macro
+----------------------------------------------------------------
 local function PlayMacro(macroName)
     local data = loadMacroData(macroName)
-    if #data == 0 then
-        warn("⚠️ Macro rỗng:", macroName)
-        return
-    end
-    warn(("▶️ Play macro %s | Tổng jobs: %d"):format(macroName, #data))
-    for _, job in ipairs(data) do
-        -- Đợi đủ tiền
-        repeat task.wait(0.2) until getCurrentMoney() >= job.Cost
+    if #data == 0 then return end
 
-        -- Check lần cuối ngay trước khi đặt
-        while getCurrentMoney() < job.Cost do
-            task.wait(0.2)
-        end
+    for _, job in ipairs(data) do
+        -- Chờ đủ tiền
+        repeat task.wait(0.2) until getCurrentMoney() >= job.Cost
 
         spawnRemote:InvokeServer(
             job.UnitId,
@@ -205,19 +187,15 @@ local function PlayMacro(macroName)
             },
             job.Slot
         )
-        warn(("✅ Đặt unit %s | Cost %d"):format(job.UnitId, job.Cost))
 
-        -- Delay nhỏ để tránh spam
-        task.wait(.7)
+        task.wait(0.5) -- delay nhỏ để tránh spam
     end
-    warn("⏹️ Play macro xong:", macroName)
 end
 
 ----------------------------------------------------------------
 --===================  UI PHÍA DƯỚI  ==========================--
 ----------------------------------------------------------------
 
---// Tạo Window
 local Window = MacLib:Window({
     Title = "Pịa Hub",
     Subtitle = "Vãi Pịa",
@@ -232,8 +210,6 @@ local macroSection = MacroTab:Section({ Side = "Left", Title = "Macro Settings" 
 
 -- Dropdown tham chiếu để update
 local macroDropdown
-
--- Hàm refresh dropdown
 local function refreshDropdown()
     if not macroDropdown then return end
     macroDropdown:SetDropdown(listMacros())
@@ -249,11 +225,8 @@ macroSection:Input({
         local path = macroFolder.."/"..safeName..".json"
         if not isfile(path) then
             writefile(path, HttpService:JSONEncode({}))
-            warn("📁 Đã tạo macro:", safeName)
-        else
-            warn("⚠️ Macro đã tồn tại:", safeName)
         end
-        refreshDropdown() -- cập nhật ngay khi tạo
+        refreshDropdown()
     end
 })
 
@@ -266,7 +239,6 @@ macroDropdown = macroSection:Dropdown({
     Callback = function(option)
         settings.selectedMacro = option
         saveSettings(settings)
-        print("Chọn macro:", option)
     end
 })
 
@@ -283,15 +255,11 @@ macroSection:Toggle({
     Default = false,
     Callback = function(state)
         if state then
-            -- Bắt đầu record
             Recording = true
             MacroData = {}
-            warn("🔴 Bắt đầu Record")
         else
-            -- Dừng record và lưu
             Recording = false
             saveMacroData(settings.selectedMacro)
-            warn("🟢 Dừng Record, dữ liệu đã lưu")
         end
     end
 })
