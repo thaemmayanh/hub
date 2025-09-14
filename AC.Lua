@@ -69,85 +69,162 @@ local spawnRemote = ReplicatedStorage
     :WaitForChild("client_to_server")
     :WaitForChild("spawn_unit")
 
+local upgradeRemote = ReplicatedStorage
+    :WaitForChild("endpoints")
+    :WaitForChild("client_to_server")
+    :WaitForChild("upgrade_unit_ingame")
+
 -- Biến điều khiển
 local Recording = false
-local MacroData = {}
-local pendingRecords = {}
+local MacroData = {}  -- dùng dictionary, key = logCount dạng chuỗi
+local logCount = 0
+local unitData = {}
 
 ----------------------------------------------------------------
 -- Hàm phụ trợ
 ----------------------------------------------------------------
--- Chuyển Vector3 -> table
-local function vecToTable(v)
-    return {x = v.X, y = v.Y, z = v.Z}
+local function moneyValue()
+    return LocalPlayer:WaitForChild("_stats"):WaitForChild("resource")
 end
 
--- Chuyển table -> Vector3
-local function tableToVec(t)
-    if not t then return Vector3.new(0,0,0) end
-    return Vector3.new(t.x, t.y, t.z)
-end
-
--- Lấy tiền hiện có từ resource
-local function getCurrentMoney()
-    local stats = LocalPlayer:FindFirstChild("_stats")
-    if stats and stats:FindFirstChild("resource") then
-        return stats.resource.Value
+local function waitForMoney(atLeast)
+    atLeast = atLeast or 0
+    local res = moneyValue()
+    while res.Value < atLeast do
+        task.wait(0.15)
     end
-    return 0
 end
 
-----------------------------------------------------------------
--- Bắt Cost từ GUI MoneyChange
-----------------------------------------------------------------
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-local moneyFolder = PlayerGui:WaitForChild("spawn_units")
-    :WaitForChild("Lives")
-    :WaitForChild("Frame")
-    :WaitForChild("Resource")
-    :WaitForChild("Money")
-
-moneyFolder.ChildAdded:Connect(function(child)
-    if child.Name == "MoneyChange" and #pendingRecords > 0 then
-        local textObj = child:WaitForChild("text", 1)
-        if textObj then
-            local raw = textObj.Text
-            local clean = raw:gsub("%+", ""):gsub("[^%d%-]", "")
-            local num = tonumber(clean) or 0
-            if num < 0 then
-                -- lấy record đầu tiên trong queue
-                local rec = table.remove(pendingRecords, 1)
-                rec.Cost = -num
+local function nearModelByCFrame(cf, radius)
+    radius = radius or 6
+    local target, minD = nil, radius
+    for _, m in ipairs(workspace._UNITS:GetChildren()) do
+        if m:IsA("Model") and m:FindFirstChild("HumanoidRootPart") then
+            local d = (m.HumanoidRootPart.Position - cf.Position).Magnitude
+            if d <= minD then
+                minD, target = d, m
             end
         end
     end
+    return target
+end
+
+-- Vector3 -> table
+local function vecToTable(v)
+    if typeof(v) == "Vector3" then
+        return {x=v.X, y=v.Y, z=v.Z}
+    end
+    return {x=0,y=0,z=0}
+end
+
+-- table -> Vector3
+local function tableToVec(t)
+    if t and t.x then
+        return Vector3.new(t.x,t.y,t.z)
+    end
+    return Vector3.new(0,0,0)
+end
+
+----------------------------------------------------------------
+-- Logging
+----------------------------------------------------------------
+local function logUpgrade(unitId, diff, cf)
+    logCount += 1
+    local pos = (typeof(cf) == "CFrame") and cf.Position or Vector3.new()
+    MacroData[tostring(logCount)] = {
+        Money = diff or 0,
+        Type = "upgrade",
+        UnitID = unitId,
+        Position = vecToTable(pos)
+    }
+end
+
+local function logPlace(unitIdParam, spawnedId, cost, origin, direction, age)
+    logCount += 1
+    MacroData[tostring(logCount)] = {
+        Money = cost or 0,
+        Type = "place",
+        UnitIDParam = unitIdParam,
+        SpawnedID = spawnedId,
+        Origin = vecToTable(origin),
+        Direction = vecToTable(direction),
+        Age = age or 0
+    }
+end
+
+----------------------------------------------------------------
+-- Track upgrade qua total_spent
+----------------------------------------------------------------
+local function trackUnit(model)
+    if not model:FindFirstChild("_stats") then return end
+    local stats = model._stats
+    local spent = stats:FindFirstChild("total_spent")
+    local idVal = stats:FindFirstChild("id")
+    if spent and idVal then
+        unitData[model] = spent.Value
+        spent.Changed:Connect(function()
+            if Recording then
+                local oldVal = unitData[model] or 0
+                local diff = spent.Value - oldVal
+                unitData[model] = spent.Value
+                if diff > 0 then
+                    local hrp = model:FindFirstChild("HumanoidRootPart")
+                    logUpgrade(idVal.Value, diff, hrp and hrp.CFrame or CFrame.new())
+                end
+            else
+                unitData[model] = spent.Value
+            end
+        end)
+    end
+end
+
+for _, m in ipairs(workspace._UNITS:GetChildren()) do
+    if m:IsA("Model") then trackUnit(m) end
+end
+workspace._UNITS.ChildAdded:Connect(function(m)
+    if m:IsA("Model") then trackUnit(m) end
 end)
 
 ----------------------------------------------------------------
--- Hook đặt unit để log vào MacroData
+-- Hook spawn_unit để log place
 ----------------------------------------------------------------
 local mt = getrawmetatable(game)
 local oldNamecall = mt.__namecall
 setreadonly(mt, false)
 
-mt.__namecall = function(self, ...)
-    local method = getnamecallmethod()
-    local args = {...}
-
-    if self == spawnRemote and method == "InvokeServer" and Recording then
-        local recordEntry = {
-            UnitId    = args[1],
-            Origin    = vecToTable(args[2].Origin),
-            Direction = vecToTable(args[2].Direction),
-            Slot      = args[3],
-            Cost      = 0 -- cập nhật sau khi MoneyChange xuất hiện
-        }
-        table.insert(MacroData, recordEntry)
-        table.insert(pendingRecords, recordEntry)
+mt.__namecall = newcclosure(function(self, ...)
+    local method, args = getnamecallmethod(), {...}
+    if Recording and self == spawnRemote and method == "InvokeServer" then
+        local unitIdParam, placementData, age = args[1], args[2], args[3]
+        task.spawn(function()
+            local found
+            for i = 1, 100 do
+                for _, model in ipairs(workspace._UNITS:GetChildren()) do
+                    local st = model:FindFirstChild("_stats")
+                    if st and st:FindFirstChild("id") then
+                        found = model
+                        break
+                    end
+                end
+                if found then break end
+                task.wait(0.05)
+            end
+            if found then
+                local st = found._stats
+                logPlace(
+                    unitIdParam,
+                    st.id.Value,
+                    st.total_spent.Value or 0,
+                    placementData.Origin,
+                    placementData.Direction,
+                    age
+                )
+            end
+        end)
     end
+    return oldNamecall(self, unpack(args))
+end)
 
-    return oldNamecall(self, ...)
-end
 setreadonly(mt, true)
 
 ----------------------------------------------------------------
@@ -173,22 +250,42 @@ end
 ----------------------------------------------------------------
 local function PlayMacro(macroName)
     local data = loadMacroData(macroName)
-    if #data == 0 then return end
+    if not data then return end
 
-    for _, job in ipairs(data) do
-        -- Chờ đủ tiền
-        repeat task.wait(0.2) until getCurrentMoney() >= job.Cost
+    -- gom key ra 1 bảng và sort theo số
+    local keys = {}
+    for k in pairs(data) do
+        table.insert(keys, tonumber(k))
+    end
+    table.sort(keys)
 
-        spawnRemote:InvokeServer(
-            job.UnitId,
-            {
-                Origin    = tableToVec(job.Origin),
-                Direction = tableToVec(job.Direction)
-            },
-            job.Slot
-        )
-
-        task.wait(0.5) -- delay nhỏ để tránh spam
+    for _, idx in ipairs(keys) do
+        local job = data[tostring(idx)]
+        if job then
+            waitForMoney(job.Money or 0)
+            if job.Type == "place" then
+                spawnRemote:InvokeServer(
+                    job.UnitIDParam,
+                    {
+                        Origin = tableToVec(job.Origin),
+                        Direction = tableToVec(job.Direction)
+                    },
+                    job.Age or 0
+                )
+                print("[PLAYBACK][PLACE] ->", job.UnitIDParam)
+            elseif job.Type == "upgrade" then
+                local pos = tableToVec(job.Position)
+                local cf = CFrame.new(pos)
+                local target = nearModelByCFrame(cf, 7)
+                if target then
+                    upgradeRemote:InvokeServer(target.Name)
+                    print("[PLAYBACK][UPGRADE] ->", job.UnitID, target.Name)
+                else
+                    warn("[PLAYBACK][UPGRADE] Không tìm thấy unit gần vị trí.")
+                end
+            end
+            task.wait(0.5)
+        end
     end
 end
 
