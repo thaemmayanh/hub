@@ -1,12 +1,14 @@
 repeat task.wait() until game:IsLoaded()
 
 -- 🧼 Xoá GUI cũ nếu tồn tại
-pcall(function()
-    local oldUI = game.CoreGui:FindFirstChild("MacLib")
-    if oldUI then oldUI:Destroy() end
-end)
-
+if getgenv()._PiaHubarxLoaded then return end
 getgenv()._PiaHubarxLoaded = true
+
+local vu = game:GetService("VirtualUser")
+game:GetService("Players").LocalPlayer.Idled:Connect(function()
+    vu:CaptureController()
+    vu:ClickButton2(Vector2.new(0, 0))
+end)
 
 --// Services
 local HttpService = game:GetService("HttpService")
@@ -30,6 +32,13 @@ if not isfolder(macroFolder) then makefolder(macroFolder) end
 local defaultSettings = {
     selectedMacro = "",
     playMacro     = false,
+    next          = false,
+    replay        = false,
+    returnLobby   = false,
+    selectedGates = {},        
+    selectedType = "High Gate",
+    autoGate = false,
+    autoFindGate = false,
 }
 
 -- Hàm load/save settings
@@ -61,6 +70,110 @@ local function listMacros()
     table.sort(names)
     return names
 end
+
+----------------------------------------------------------------
+-- Hàm xử lý End Game Jobs
+----------------------------------------------------------------
+local voteRemote = ReplicatedStorage:WaitForChild("endpoints"):WaitForChild("client_to_server"):WaitForChild("set_game_finished_vote")
+
+local function DoJobs()
+    task.spawn(function()
+        local gui = LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("ResultsUI")
+        while task.wait(1) do
+            -- Bỏ qua nếu đang ở lobby
+            if game.PlaceId ~= 107573139811370 and gui.Enabled then
+                -- Ưu tiên next → replay → return
+                if settings.next then
+                    voteRemote:InvokeServer("next_story")
+                    task.wait(1)
+                end
+                if gui.Enabled and settings.replay then
+                    voteRemote:InvokeServer("replay")
+                    task.wait(1)
+                end
+                if gui.Enabled and settings.returnLobby then
+                    game:GetService("TeleportService"):Teleport(107573139811370, LocalPlayer)
+                end
+                -- Đợi GUI tắt rồi mới quay lại vòng tiếp theo
+                repeat task.wait(1) until not gui.Enabled
+            end
+        end
+    end)
+end
+
+DoJobs()
+
+----------------------------------------------------------------
+-- Hàm Auto Gate / Auto Find
+----------------------------------------------------------------
+local endpoints = ReplicatedStorage:WaitForChild("endpoints"):WaitForChild("client_to_server")
+local gatePriority = {"C","D","B","A","S","National"}
+
+-- Lấy ID Gate dựa trên setting
+local function GetGateId()
+    local gatesFolder = workspace:WaitForChild("_GATES"):WaitForChild("gates")
+    local found = {}
+    for _, folder in ipairs(gatesFolder:GetChildren()) do
+        local gateType = folder:FindFirstChild("GateType")
+        if gateType and table.find(settings.selectedGates, gateType.Value) then
+            table.insert(found, {id = tonumber(folder.Name), type = gateType.Value})
+        end
+    end
+    if #found == 0 then return nil end
+
+    table.sort(found, function(a,b)
+        return table.find(gatePriority, a.type) < table.find(gatePriority, b.type)
+    end)
+
+    if settings.selectedType == "High Gate" then
+        return found[#found].id
+    elseif settings.selectedType == "Low Gate" then
+        return found[1].id
+    elseif settings.selectedType == "Random Gate" then
+        return found[math.random(1,#found)].id
+    end
+end
+
+-- Auto ở lobby
+local function AutoLobby()
+    if game.PlaceId ~= 107573139811370 then return end
+    local id = GetGateId()
+    if not id then return end
+
+    if settings.autoGate then
+        endpoints.request_join_lobby:InvokeServer("_GATE"..id)
+        task.wait(1)
+        endpoints.request_start_game:InvokeServer("_GATE"..id)
+    elseif settings.autoFindGate then
+        endpoints.request_matchmaking:InvokeServer("_GATE", { GateUuid = id })
+    end
+end
+
+-- Auto trong trận
+local function AutoInGame()
+    if game.PlaceId == 107573139811370 then return end
+    local gui = LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("ResultsUI")
+    if gui.Enabled then
+        local id = GetGateId()
+        if not id then return end
+
+        if settings.autoGate then
+            endpoints.set_game_finished_vote:InvokeServer("play_gate_next", { GateUuid = id })
+        elseif settings.autoFindGate then
+            endpoints.request_matchmaking:InvokeServer("_GATE", { GateUuid = id })
+        end
+    end
+end
+
+-- Loop chạy auto
+task.spawn(function()
+    while task.wait(3) do
+        if settings.autoGate or settings.autoFindGate then
+            AutoLobby()
+            AutoInGame()
+        end
+    end
+end)
 
 --// Record & Play Macro
 local spawnRemote = ReplicatedStorage:WaitForChild("endpoints"):WaitForChild("client_to_server"):WaitForChild("spawn_unit")
@@ -304,8 +417,88 @@ local Window = MacLib:Window({
 })
 
 local TabGroup = Window:TabGroup()
+local MainTab = TabGroup:Tab({ Name = "Main" })
+local mainSection = MainTab:Section({ Side = "Left", Title = "End Game Settings" })
+local eventSection = MainTab:Section({ Side = "Right", Title = "Event" })
 local MacroTab = TabGroup:Tab({ Name = "Macro" })
 local macroSection = MacroTab:Section({ Side = "Left", Title = "Macro Settings" })
+
+mainSection:Toggle({
+    Name = "Next",
+    Default = settings.next,
+    Callback = function(state)
+        settings.next = state
+        saveSettings(settings)
+    end
+})
+
+mainSection:Toggle({
+    Name = "Replay",
+    Default = settings.replay,
+    Callback = function(state)
+        settings.replay = state
+        saveSettings(settings)
+    end
+})
+
+mainSection:Toggle({
+    Name = "Return to Lobby",
+    Default = settings.returnLobby,
+    Callback = function(state)
+        settings.returnLobby = state
+        saveSettings(settings)
+    end
+})
+
+eventSection:Dropdown({
+    Name = "Select Gate",
+    Multi = true,
+    Required = false,
+    Options = {"C","D","B","A","S","National"},
+    Default = settings.selectedGates or {}, -- ví dụ {"C","A"}
+    Callback = function(selected)
+        -- Convert table {["C"]=true,["B"]=false,...} thành array {"C","A"}
+        local values = {}
+        for v, state in pairs(selected) do
+            if state then table.insert(values, v) end
+        end
+        settings.selectedGates = values
+        saveSettings(settings)
+    end
+})
+
+-- Single Dropdown chọn Type
+eventSection:Dropdown({
+    Name = "Select Type",
+    Multi = false,
+    Required = true,
+    Options = {"High Gate","Random Gate","Low Gate"},
+    Default = settings.selectedType or "High Gate",
+    Callback = function(val)
+        settings.selectedType = val
+        saveSettings(settings)
+    end
+})
+
+-- Toggle Auto Gate
+eventSection:Toggle({
+    Name = "Auto Gate",
+    Default = settings.autoGate or false,
+    Callback = function(state)
+        settings.autoGate = state
+        saveSettings(settings)
+    end
+})
+
+-- Toggle Auto Find Gate
+eventSection:Toggle({
+    Name = "Auto Find Gate",
+    Default = settings.autoFindGate or false,
+    Callback = function(state)
+        settings.autoFindGate = state
+        saveSettings(settings)
+    end
+})
 
 -- Dropdown tham chiếu để update
 local macroDropdown
@@ -317,7 +510,8 @@ end
 
 macroSection:Input({
     Name        = "create macro",
-    Placeholder = "Nhập tên macro...",
+    Placeholder = "Name Macro",
+    Default     = "",
     Callback    = function(val)
         local safeName = val:gsub("[^%w_]", "")
         if safeName == "" then return end
