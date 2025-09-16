@@ -10,6 +10,9 @@ getgenv()._PiaHubarxLoaded = true
 
 --// Services
 local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
 
 --// Lib
 local MacLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/thaemmayanh/thaem/refs/heads/main/lib"))()
@@ -23,7 +26,7 @@ local fileName     = "settings.json"
 if not isfolder(folderName) then makefolder(folderName) end
 if not isfolder(macroFolder) then makefolder(macroFolder) end
 
--- Default settings (chỉ giữ 2 key cơ bản)
+-- Default settings
 local defaultSettings = {
     selectedMacro = "",
     playMacro     = false,
@@ -45,11 +48,7 @@ end
 
 local settings = loadSettings()
 
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local LocalPlayer = Players.LocalPlayer
-
--- Hàm lấy danh sách macro (không kèm .json)
+-- Hàm lấy danh sách macro
 local function listMacros()
     local files = listfiles(macroFolder)
     local names = {}
@@ -64,19 +63,16 @@ local function listMacros()
 end
 
 --// Record & Play Macro
-local spawnRemote = ReplicatedStorage
-    :WaitForChild("endpoints")
+local spawnRemote = ReplicatedStorage:WaitForChild("endpoints"):WaitForChild("client_to_server"):WaitForChild("spawn_unit")
+local upgradeRemote = ReplicatedStorage:WaitForChild("endpoints"):WaitForChild("client_to_server"):WaitForChild("upgrade_unit_ingame")
+local sellRemote = ReplicatedStorage:WaitForChild("endpoints"):WaitForChild("client_to_server"):WaitForChild("sell_unit_ingame")
+local voteStartRemote = ReplicatedStorage:WaitForChild("endpoints")
     :WaitForChild("client_to_server")
-    :WaitForChild("spawn_unit")
-
-local upgradeRemote = ReplicatedStorage
-    :WaitForChild("endpoints")
-    :WaitForChild("client_to_server")
-    :WaitForChild("upgrade_unit_ingame")
-
+    :WaitForChild("vote_start")
+    
 -- Biến điều khiển
 local Recording = false
-local MacroData = {}  -- dùng dictionary, key = logCount dạng chuỗi
+local MacroData = {}
 local logCount = 0
 local unitData = {}
 
@@ -109,7 +105,6 @@ local function nearModelByCFrame(cf, radius)
     return target
 end
 
--- Vector3 -> table
 local function vecToTable(v)
     if typeof(v) == "Vector3" then
         return {x=v.X, y=v.Y, z=v.Z}
@@ -117,7 +112,6 @@ local function vecToTable(v)
     return {x=0,y=0,z=0}
 end
 
--- table -> Vector3
 local function tableToVec(t)
     if t and t.x then
         return Vector3.new(t.x,t.y,t.z)
@@ -134,6 +128,16 @@ local function logUpgrade(unitId, diff, cf)
     MacroData[tostring(logCount)] = {
         Money = diff or 0,
         Type = "upgrade",
+        UnitID = unitId,
+        Position = vecToTable(pos)
+    }
+end
+
+local function logSell(unitId, cf)
+    logCount += 1
+    local pos = (typeof(cf) == "CFrame") and cf.Position or Vector3.new()
+    MacroData[tostring(logCount)] = {
+        Type = "sell",
         UnitID = unitId,
         Position = vecToTable(pos)
     }
@@ -186,48 +190,6 @@ workspace._UNITS.ChildAdded:Connect(function(m)
 end)
 
 ----------------------------------------------------------------
--- Hook spawn_unit để log place
-----------------------------------------------------------------
-local mt = getrawmetatable(game)
-local oldNamecall = mt.__namecall
-setreadonly(mt, false)
-
-mt.__namecall = newcclosure(function(self, ...)
-    local method, args = getnamecallmethod(), {...}
-    if Recording and self == spawnRemote and method == "InvokeServer" then
-        local unitIdParam, placementData, age = args[1], args[2], args[3]
-        task.spawn(function()
-            local found
-            for i = 1, 100 do
-                for _, model in ipairs(workspace._UNITS:GetChildren()) do
-                    local st = model:FindFirstChild("_stats")
-                    if st and st:FindFirstChild("id") then
-                        found = model
-                        break
-                    end
-                end
-                if found then break end
-                task.wait(0.05)
-            end
-            if found then
-                local st = found._stats
-                logPlace(
-                    unitIdParam,
-                    st.id.Value,
-                    st.total_spent.Value or 0,
-                    placementData.Origin,
-                    placementData.Direction,
-                    age
-                )
-            end
-        end)
-    end
-    return oldNamecall(self, unpack(args))
-end)
-
-setreadonly(mt, true)
-
-----------------------------------------------------------------
 -- Save & Load MacroData
 ----------------------------------------------------------------
 local function saveMacroData(macroName)
@@ -246,51 +208,91 @@ local function loadMacroData(macroName)
 end
 
 ----------------------------------------------------------------
--- Play Macro
+-- Play Macro + Stop Macro
 ----------------------------------------------------------------
+local Playing = false
+local CurrentSession = 0
+local VoteTriggered = false
+
+local function StopMacro()
+    Playing = false
+    CurrentSession += 1 -- tăng phiên bản, vòng lặp cũ sẽ tự hủy
+end
+
 local function PlayMacro(macroName)
+    if not macroName or macroName == "" then return end
+    if Playing then return end
+
     local data = loadMacroData(macroName)
     if not data then return end
+    Playing = true
+    local session = CurrentSession
 
-    -- gom key ra 1 bảng và sort theo số
     local keys = {}
-    for k in pairs(data) do
-        table.insert(keys, tonumber(k))
-    end
+    for k in pairs(data) do table.insert(keys, tonumber(k)) end
     table.sort(keys)
 
     for _, idx in ipairs(keys) do
+        if not Playing or session ~= CurrentSession then break end
+
         local job = data[tostring(idx)]
         if job then
-            waitForMoney(job.Money or 0)
+            if job.Type == "place" or job.Type == "upgrade" then
+                waitForMoney(job.Money or 0)
+            end
+            if not Playing or session ~= CurrentSession then break end
+
             if job.Type == "place" then
-                spawnRemote:InvokeServer(
-                    job.UnitIDParam,
-                    {
-                        Origin = tableToVec(job.Origin),
-                        Direction = tableToVec(job.Direction)
-                    },
-                    job.Age or 0
-                )
-                print("[PLAYBACK][PLACE] ->", job.UnitIDParam)
+                spawnRemote:InvokeServer(job.UnitIDParam, {
+                    Origin = tableToVec(job.Origin),
+                    Direction = tableToVec(job.Direction)
+                }, job.Age or 0)
+
             elseif job.Type == "upgrade" then
                 local pos = tableToVec(job.Position)
-                local cf = CFrame.new(pos)
-                local target = nearModelByCFrame(cf, 7)
-                if target then
-                    upgradeRemote:InvokeServer(target.Name)
-                    print("[PLAYBACK][UPGRADE] ->", job.UnitID, target.Name)
-                else
-                    warn("[PLAYBACK][UPGRADE] Không tìm thấy unit gần vị trí.")
-                end
+                local target = nearModelByCFrame(CFrame.new(pos), 7)
+                if target then upgradeRemote:InvokeServer(target.Name) end
+
+            elseif job.Type == "sell" then
+                local pos = tableToVec(job.Position)
+                local target = nearModelByCFrame(CFrame.new(pos), 7)
+                if target then sellRemote:InvokeServer(target.Name) end
             end
+
             task.wait(0.5)
         end
     end
+
+    if session == CurrentSession then
+        Playing = false
+        VoteTriggered = false
+    end
 end
 
+-- hook remote
+local mt = getrawmetatable(game)
+local oldNamecall = mt.__namecall
+setreadonly(mt, false)
+
+mt.__namecall = newcclosure(function(self, ...)
+    local method = getnamecallmethod()
+    if self == voteStartRemote and (method == "InvokeServer" or method == "FireServer") then
+        if not VoteTriggered and settings.playMacro then
+            VoteTriggered = true
+            task.spawn(function()
+                StopMacro()
+                task.wait(0.3)
+                PlayMacro(settings.selectedMacro)
+            end)
+        end
+    end
+    return oldNamecall(self, ...)
+end)
+
+setreadonly(mt, true)
+
 ----------------------------------------------------------------
---===================  UI PHÍA DƯỚI  ==========================--
+--=================== UI ==========================--
 ----------------------------------------------------------------
 
 local Window = MacLib:Window({
@@ -301,18 +303,18 @@ local Window = MacLib:Window({
     AcrylicBlur = true,
 })
 
-local TabGroup     = Window:TabGroup()
-local MacroTab     = TabGroup:Tab({ Name = "Macro" })
+local TabGroup = Window:TabGroup()
+local MacroTab = TabGroup:Tab({ Name = "Macro" })
 local macroSection = MacroTab:Section({ Side = "Left", Title = "Macro Settings" })
 
 -- Dropdown tham chiếu để update
 local macroDropdown
 local function refreshDropdown()
-    if not macroDropdown then return end
-    macroDropdown:SetDropdown(listMacros())
+    if macroDropdown then
+        macroDropdown:SetDropdown(listMacros())
+    end
 end
 
--- Input: Create Macro
 macroSection:Input({
     Name        = "create macro",
     Placeholder = "Nhập tên macro...",
@@ -327,7 +329,6 @@ macroSection:Input({
     end
 })
 
--- Dropdown: Select Macro
 macroDropdown = macroSection:Dropdown({
     Name     = "select macro",
     Options  = listMacros(),
@@ -339,14 +340,10 @@ macroDropdown = macroSection:Dropdown({
     end
 })
 
--- Auto refresh mỗi 1 giây
 task.spawn(function()
-    while task.wait(1) do
-        refreshDropdown()
-    end
+    while task.wait(1) do refreshDropdown() end
 end)
 
--- Toggle: Record
 macroSection:Toggle({
     Name    = "record",
     Default = false,
@@ -361,17 +358,19 @@ macroSection:Toggle({
     end
 })
 
--- Toggle: Play
 macroSection:Toggle({
     Name    = "play macro",
     Default = settings.playMacro,
     Callback = function(state)
         settings.playMacro = state
         saveSettings(settings)
+
         if state then
-            PlayMacro(settings.selectedMacro)
-            settings.playMacro = false
-            saveSettings(settings)
+            task.spawn(function()
+                PlayMacro(settings.selectedMacro)
+            end)
+        else
+            StopMacro()
         end
     end
 })
