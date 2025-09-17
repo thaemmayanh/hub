@@ -1,7 +1,13 @@
 repeat task.wait() until game:IsLoaded()
 
 -- 🧼 Xoá GUI cũ nếu tồn tại
-if getgenv()._PiaHubarxLoaded then return end
+pcall(function()
+    local oldUI = game.CoreGui:FindFirstChild("MacLib")
+    if oldUI then oldUI:Destroy() end
+    local oldWin = game.CoreGui:FindFirstChild("ScreenGui")
+    if oldWin then oldWin:Destroy() end
+end)
+
 getgenv()._PiaHubarxLoaded = true
 
 local vu = game:GetService("VirtualUser")
@@ -74,28 +80,29 @@ end
 ----------------------------------------------------------------
 -- Hàm xử lý End Game Jobs
 ----------------------------------------------------------------
-local voteRemote = ReplicatedStorage:WaitForChild("endpoints"):WaitForChild("client_to_server"):WaitForChild("set_game_finished_vote")
+local voteRemote = ReplicatedStorage:WaitForChild("endpoints")
+    :WaitForChild("client_to_server")
+    :WaitForChild("set_game_finished_vote")
 
 local function DoJobs()
     task.spawn(function()
-        local gui = LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("ResultsUI")
         while task.wait(1) do
-            -- Bỏ qua nếu đang ở lobby
-            if game.PlaceId ~= 107573139811370 and gui.Enabled then
-                -- Ưu tiên next → replay → return
-                if settings.next then
-                    voteRemote:InvokeServer("next_story")
-                    task.wait(1)
+            if game.PlaceId ~= 107573139811370 then
+                local gui = LocalPlayer:FindFirstChild("PlayerGui"):FindFirstChild("ResultsUI")
+                if gui and gui.Enabled then
+                    if settings.next then
+                        voteRemote:InvokeServer("next_story")
+                        task.wait(1)
+                    end
+                    if gui.Enabled and settings.replay then
+                        voteRemote:InvokeServer("replay")
+                        task.wait(1)
+                    end
+                    if gui.Enabled and settings.returnLobby then
+                        game:GetService("TeleportService"):Teleport(107573139811370, LocalPlayer)
+                    end
+                    repeat task.wait(1) until not gui.Enabled
                 end
-                if gui.Enabled and settings.replay then
-                    voteRemote:InvokeServer("replay")
-                    task.wait(1)
-                end
-                if gui.Enabled and settings.returnLobby then
-                    game:GetService("TeleportService"):Teleport(107573139811370, LocalPlayer)
-                end
-                -- Đợi GUI tắt rồi mới quay lại vòng tiếp theo
-                repeat task.wait(1) until not gui.Enabled
             end
         end
     end)
@@ -383,12 +390,67 @@ local function PlayMacro(macroName)
 end
 
 -- hook remote
+local function isValidModel(m)
+    return m:IsA("Model") and not m.Name:lower():match("^pve")
+end
+
 local mt = getrawmetatable(game)
 local oldNamecall = mt.__namecall
 setreadonly(mt, false)
 
 mt.__namecall = newcclosure(function(self, ...)
-    local method = getnamecallmethod()
+    local method, args = getnamecallmethod(), {...}
+
+    -- 🎥 Recording logic (place & sell)
+    if Recording then
+        if self == spawnRemote and method == "InvokeServer" then
+            local unitIdParam, placementData, age = args[1], args[2], args[3]
+            task.spawn(function()
+                local found
+                local conn
+                conn = workspace._UNITS.ChildAdded:Connect(function(m)
+                    if isValidModel(m) then
+                        local st = m:WaitForChild("_stats", 3)
+                        if st then
+                            local playerVal = st:FindFirstChild("player")
+                            if playerVal and playerVal.Value == LocalPlayer then
+                                found = m
+                                conn:Disconnect()
+                            end
+                        end
+                    end
+                end)
+                local t0 = tick()
+                while not found and tick() - t0 < 2 do
+                    task.wait(0.1)
+                end
+                if found then
+                    local st = found._stats
+                    logPlace(
+                        unitIdParam,
+                        st:FindFirstChild("id") and st.id.Value or "",
+                        st:FindFirstChild("total_spent") and st.total_spent.Value or 0,
+                        placementData.Origin,
+                        placementData.Direction,
+                        age
+                    )
+                end
+            end)
+
+        elseif self == sellRemote and method == "InvokeServer" then
+            local unitId = args[1]
+            task.spawn(function()
+                local target = workspace._UNITS:FindFirstChild(unitId)
+                logSell(
+                    unitId,
+                    target and target:FindFirstChild("HumanoidRootPart")
+                        and target.HumanoidRootPart.CFrame or CFrame.new()
+                )
+            end)
+        end
+    end
+
+    -- 🎮 Vote auto-macro logic
     if self == voteStartRemote and (method == "InvokeServer" or method == "FireServer") then
         if not VoteTriggered and settings.playMacro then
             VoteTriggered = true
@@ -399,7 +461,8 @@ mt.__namecall = newcclosure(function(self, ...)
             end)
         end
     end
-    return oldNamecall(self, ...)
+
+    return oldNamecall(self, unpack(args))
 end)
 
 setreadonly(mt, true)
