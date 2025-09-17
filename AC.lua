@@ -289,7 +289,9 @@ local function trackUnit(model)
     local stats = model._stats
     local spent = stats:FindFirstChild("total_spent")
     local idVal = stats:FindFirstChild("id")
-    if spent and idVal then
+    local owner = stats:FindFirstChild("player")
+
+    if spent and idVal and owner and owner.Value == LocalPlayer then
         unitData[model] = spent.Value
         spent.Changed:Connect(function()
             if Recording then
