@@ -45,6 +45,8 @@ local defaultSettings = {
     selectedType = "High Gate",
     autoGate = false,
     autoFindGate = false,
+    webhookLink   = "",
+    sendWebhook   = false,
 }
 
 -- Hàm load/save settings
@@ -467,6 +469,112 @@ end)
 
 setreadonly(mt, true)
 
+--// WEBHOOK
+local function collectData()
+    local data = {}
+    local stats = LocalPlayer:WaitForChild("_stats")
+
+    -- 📊 Stats (EXP, Gold, Gem, Jewels cuối cùng)
+    local exp   = stats:FindFirstChild("player_xp") and stats.player_xp.Value or 0
+    local gold  = stats:FindFirstChild("gold_amount") and stats.gold_amount.Value or 0
+    local gem   = stats:FindFirstChild("gem_amount") and stats.gem_amount.Value or 0
+    local jewel = stats:FindFirstChild("_resourceJewels") and stats._resourceJewels.Value or 0
+
+    data.statsText = string.format("EXP: %s\nGold: %s\nGem: %s\nJewels: %s",
+        tostring(exp), tostring(gold), tostring(gem), tostring(jewel))
+
+    -- 🎯 Match Info
+    local results = LocalPlayer.PlayerGui:WaitForChild("ResultsUI", 10)
+    if results and results.Enabled then
+        local holder = results:WaitForChild("Holder")
+
+        local title = holder:FindFirstChild("Banner") and holder.Banner:FindFirstChild("Title")
+        local mapdata = holder:FindFirstChild("mapdata")
+        local middle = holder:FindFirstChild("Middle")
+
+        data.matchResult = (title and title.Text) or ""
+        data.world = (mapdata and mapdata:FindFirstChild("LevelName") and mapdata.LevelName.Text) or ""
+        data.mode  = (mapdata and mapdata:FindFirstChild("Difficulty") and mapdata.Difficulty.Text) or ""
+        data.time  = (middle and middle:FindFirstChild("PlayTime") and middle.PlayTime:FindFirstChild("ValueText")
+                      and middle.PlayTime.ValueText.Text) or ""
+    end
+
+    -- 🎁 Rewards
+    data.rewardsList = {}
+    local rewardsRoot = results and results:FindFirstChild("Holder")
+                       and results.Holder:FindFirstChild("Rewards")
+                       and results.Holder.Rewards:FindFirstChild("Reward")
+
+    if rewardsRoot then
+        for _, btn in ipairs(rewardsRoot:GetChildren()) do
+            if btn:IsA("ImageButton") then
+                local nameLbl = btn:FindFirstChild("name")
+                local amtLbl  = btn:FindFirstChild("OwnedAmount")
+                if nameLbl and amtLbl then
+                    local amt = tostring(amtLbl.Text):gsub("x", "") -- bỏ chữ x
+                    table.insert(data.rewardsList, "+" .. amt .. " " .. nameLbl.Text)
+                end
+            end
+        end
+    end
+
+    return data
+end
+
+local function sendWebhook()
+    if not settings.sendWebhook or settings.webhookLink == "" then return end
+
+    local d = collectData()
+
+    -- màu theo kết quả
+    local color = 0xffff00
+    if d.matchResult:lower():find("victory") then
+        color = 0x00ff00
+    elseif d.matchResult:lower():find("defeat") then
+        color = 0xff0000
+    end
+
+    local fields = {
+        { name = "Stats", value = d.statsText, inline = false },
+        { name = "Rewards", value = #d.rewardsList > 0 and table.concat(d.rewardsList, "\n") or "Không có", inline = true },
+        { name = "Match Info", value = string.format("%s\nWorld: %s\nMode: %s\nTime: %s", d.matchResult, d.world, d.mode, d.time), inline = false },
+    }
+
+    local payload = {
+        embeds = {{
+            title = "Pịa Hub - Battle Result",
+            color = color,
+            fields = fields,
+            thumbnail = { url = "https://i.postimg.cc/13L3GdVR/7a21b914-a70c-4af4-87b5-4a96bce7a578.png" },
+            footer = { text = "https://discord.gg/eY6gCUAnts -" .. os.date(" %Y-%m-%d %H:%M:%S") },
+        }}
+    }
+
+    local success, err = pcall(function()
+        local req = (syn and syn.request) or (http and http.request) or http_request or request
+        if not req then error("Không có hàm HTTP request") end
+        req({
+            Url = settings.webhookLink,
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = HttpService:JSONEncode(payload)
+        })
+    end)
+
+    if not success then
+        warn("❌ Gửi webhook thất bại:", err)
+    end
+end
+
+-- Lắng nghe ResultsUI Enabled
+local results = LocalPlayer.PlayerGui:WaitForChild("ResultsUI")
+results:GetPropertyChangedSignal("Enabled"):Connect(function()
+    if results.Enabled and settings.sendWebhook then
+        task.wait(2)
+        sendWebhook()
+    end
+end)
+
 ----------------------------------------------------------------
 --=================== UI ==========================--
 ----------------------------------------------------------------
@@ -485,6 +593,8 @@ local mainSection = MainTab:Section({ Side = "Left", Title = "End Game Settings"
 local eventSection = MainTab:Section({ Side = "Right", Title = "Event" })
 local MacroTab = TabGroup:Tab({ Name = "Macro" })
 local macroSection = MacroTab:Section({ Side = "Left", Title = "Macro Settings" })
+local WebhookTab = TabGroup:Tab({ Name = "Webhook" })
+local webhookSection = WebhookTab:Section({ Side = "Left", Title = "Webhook" })
 
 mainSection:Toggle({
     Name = "Next",
@@ -629,5 +739,34 @@ macroSection:Toggle({
         else
             StopMacro()
         end
+    end
+})
+
+-- Input link webhook
+webhookSection:Input({
+    Name = "Link Webhook",
+    Placeholder = "Nhập link webhook...",
+    Default = settings.webhookLink or "",
+    Callback = function(val)
+        settings.webhookLink = val
+        saveSettings(settings)
+    end
+})
+
+-- Toggle send webhook
+webhookSection:Toggle({
+    Name = "Send Webhook",
+    Default = settings.sendWebhook or false,
+    Callback = function(state)
+        settings.sendWebhook = state
+        saveSettings(settings)
+    end
+})
+
+-- Button Test Webhook
+webhookSection:Button({
+    Name = "Test Webhook",
+    Callback = function()
+        sendWebhook()
     end
 })
