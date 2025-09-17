@@ -47,6 +47,13 @@ local defaultSettings = {
     autoFindGate = false,
     webhookLink   = "",
     sendWebhook   = false,
+    autoJoinMode = "Story",
+    autoJoinMap = "",
+    autoJoinDiff  = "Normal",
+    autoJoin = false,
+    autoFind = false,
+    autoJoinAct = "Act 1",
+
 }
 
 -- Hàm load/save settings
@@ -78,6 +85,94 @@ local function listMacros()
     table.sort(names)
     return names
 end
+
+----------------------------------------------------------------
+-- 🆕 Auto Join Logic
+----------------------------------------------------------------
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local endpoints = ReplicatedStorage:WaitForChild("endpoints"):WaitForChild("client_to_server")
+
+local requestJoinLobby       = endpoints:WaitForChild("request_join_lobby")
+local requestLockLevel       = endpoints:WaitForChild("request_lock_level")
+local requestStartGame       = endpoints:WaitForChild("request_start_game")
+local requestInfinite        = endpoints:WaitForChild("request_infinite_leaderboard")
+local requestMatchmaking     = endpoints:WaitForChild("request_matchmaking")
+
+----------------------------------------------------------------
+-- 🆕 Auto Join Logic (Story / Infinite / Legend / Raid)
+----------------------------------------------------------------
+local function RunAutoJoin()
+    -- chỉ hoạt động khi ở lobby
+    if game.PlaceId ~= 107573139811370 then return end
+
+    if not settings.autoJoinMode or settings.autoJoinMap == "" then return end
+
+    local mode  = settings.autoJoinMode
+    local map   = settings.autoJoinMap
+    local act   = settings.autoJoinAct or "Act 1"
+    local diff  = settings.autoJoinDiff or "Normal"
+    local actIndex = string.match(act, "(%d+)") or "1"
+
+    -- 🏠 Chế độ Join Map
+    if settings.autoJoin then
+        if mode == "story" then
+            requestJoinLobby:InvokeServer("P1")
+            local levelName = map.."_level_"..actIndex
+            requestLockLevel:InvokeServer("P1", levelName, false, diff)
+            requestStartGame:InvokeServer("P1")
+
+        elseif mode == "infinite" then
+            requestJoinLobby:InvokeServer("P1")
+            requestInfinite:InvokeServer(map.."_infinite")
+            requestStartGame:InvokeServer("P1")
+
+        elseif mode == "legend stage" then
+            requestJoinLobby:InvokeServer("P1")
+            local levelName = map.."_legend_"..actIndex
+            requestLockLevel:InvokeServer("P1", levelName, false, "Hard")
+            requestStartGame:InvokeServer("P1")
+
+        elseif mode == "raid" then
+            requestJoinLobby:InvokeServer("R1")
+            local levelName = map.."_Raid_"..actIndex
+            requestLockLevel:InvokeServer("R1", levelName, false, "Hard")
+            requestStartGame:InvokeServer("R1")
+        end
+    end
+
+    -- 🔎 Chế độ Find Map
+    if settings.autoFind then
+        if mode == "story" then
+            local levelName = map.."_level_"..actIndex
+            local args = {levelName, {Difficulty = diff}}
+            requestMatchmaking:InvokeServer(unpack(args))
+
+        elseif mode == "infinite" then
+            local args = {map.."_infinite", {Difficulty = "Normal"}}
+            requestMatchmaking:InvokeServer(unpack(args))
+
+        elseif mode == "legend stage" then
+            local levelName = map.."_legend_"..actIndex
+            local args = {levelName, {Difficulty = "Normal"}}
+            requestMatchmaking:InvokeServer(unpack(args))
+
+        elseif mode == "raid" then
+            local levelName = map.."_Raid_"..actIndex
+            local args = {levelName, {Difficulty = "Normal"}}
+            requestMatchmaking:InvokeServer(unpack(args))
+        end
+    end
+end
+
+-- Loop chạy auto join
+task.spawn(function()
+    while task.wait(3) do
+        if settings.autoJoin or settings.autoFind then
+            RunAutoJoin()
+        end
+    end
+end)
+
 
 ----------------------------------------------------------------
 -- Hàm xử lý End Game Jobs
@@ -594,12 +689,102 @@ local Window = MacLib:Window({
 
 local TabGroup = Window:TabGroup()
 local MainTab = TabGroup:Tab({ Name = "Main" })
-local mainSection = MainTab:Section({ Side = "Left", Title = "End Game Settings" })
+local autoJoinSection = MainTab:Section({ Side = "Left", Title = "Auto Join" })
+local mainSection = MainTab:Section({ Side = "Right", Title = "End Game Settings" })
 local eventSection = MainTab:Section({ Side = "Right", Title = "Event" })
 local MacroTab = TabGroup:Tab({ Name = "Macro" })
 local macroSection = MacroTab:Section({ Side = "Left", Title = "Macro Settings" })
 local WebhookTab = TabGroup:Tab({ Name = "Webhook" })
 local webhookSection = WebhookTab:Section({ Side = "Left", Title = "Webhook" })
+
+-- Bảng map ứng với từng mode
+local mapOptions = {
+    story        = {"namek","marineford","karakura","shibuya"},
+    infinite     = {"namek","marineford","karakura","shibuya"},
+    ["legend stage"] = {"shibuya"},
+    raid         = {"Sakamato"},
+}
+
+-- Khai báo biến để có thể update lại dropdown map
+local mapDropdown
+
+-- Dropdown chọn Mode
+autoJoinSection:Dropdown({
+    Name = "Select Mode",
+    Multi = false,
+    Required = true,
+    Options = {"story","infinite","legend stage","raid"},
+    Default = settings.autoJoinMode or "story",
+    Callback = function(val)
+        settings.autoJoinMode = val
+        saveSettings(settings)
+        local opts = mapOptions[val] or {}
+        if mapDropdown then
+            mapDropdown:SetDropdown(opts)
+            if table.find(opts, settings.autoJoinMap) then
+                mapDropdown:SetValue(settings.autoJoinMap)
+            else
+                settings.autoJoinMap = opts[1] or ""
+                mapDropdown:SetValue(settings.autoJoinMap)
+                saveSettings(settings)
+            end
+        end
+    end
+})
+
+mapDropdown = autoJoinSection:Dropdown({
+    Name = "Select Map",
+    Multi = false,
+    Required = true,
+    Options = mapOptions[settings.autoJoinMode] or {},
+    Default = settings.autoJoinMap or (mapOptions[settings.autoJoinMode] and mapOptions[settings.autoJoinMode][1]) or "",
+    Callback = function(val)
+        settings.autoJoinMap = val
+        saveSettings(settings)
+    end
+})
+
+autoJoinSection:Dropdown({
+    Name = "Select Difficulty",
+    Multi = false,
+    Required = true,
+    Options = {"Normal","Hard"},
+    Default = settings.autoJoinDiff or "Normal",
+    Callback = function(val)
+        settings.autoJoinDiff = val
+        saveSettings(settings)
+    end
+})
+
+autoJoinSection:Dropdown({
+    Name = "Select Act",
+    Multi = false,
+    Required = true,
+    Options = {"Act 1","Act 2","Act 3","Act 4","Act 5","Act 6"},
+    Default = settings.autoJoinAct or "Act 1",
+    Callback = function(val)
+        settings.autoJoinAct = val
+        saveSettings(settings)
+    end
+})
+
+autoJoinSection:Toggle({
+    Name = "Join Map",
+    Default = settings.autoJoin or false,
+    Callback = function(state)
+        settings.autoJoin = state
+        saveSettings(settings)
+    end
+})
+
+autoJoinSection:Toggle({
+    Name = "Find Map",
+    Default = settings.autoFind or false,
+    Callback = function(state)
+        settings.autoFind = state
+        saveSettings(settings)
+    end
+})
 
 mainSection:Toggle({
     Name = "Next",
