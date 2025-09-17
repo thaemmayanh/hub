@@ -218,9 +218,12 @@ local function nearModelByCFrame(cf, radius)
     local target, minD = nil, radius
     for _, m in ipairs(workspace._UNITS:GetChildren()) do
         if m:IsA("Model") and m:FindFirstChild("HumanoidRootPart") then
-            local d = (m.HumanoidRootPart.Position - cf.Position).Magnitude
-            if d <= minD then
-                minD, target = d, m
+            local stats = m:FindFirstChild("_stats")
+            if stats and stats:FindFirstChild("player") and stats.player.Value == LocalPlayer then
+                local d = (m.HumanoidRootPart.Position - cf.Position).Magnitude
+                if d <= minD then
+                    minD, target = d, m
+                end
             end
         end
     end
@@ -356,12 +359,14 @@ local function PlayMacro(macroName)
 
     for _, idx in ipairs(keys) do
         if not Playing or session ~= CurrentSession then break end
-
         local job = data[tostring(idx)]
+
         if job then
+            -- Chờ đủ tiền trước khi thực hiện
             if job.Type == "place" or job.Type == "upgrade" then
                 waitForMoney(job.Money or 0)
             end
+
             if not Playing or session ~= CurrentSession then break end
 
             if job.Type == "place" then
@@ -372,16 +377,28 @@ local function PlayMacro(macroName)
 
             elseif job.Type == "upgrade" then
                 local pos = tableToVec(job.Position)
-                local target = nearModelByCFrame(CFrame.new(pos), 7)
-                if target then upgradeRemote:InvokeServer(target.Name) end
+                local target
+                repeat
+                    target = nearModelByCFrame(CFrame.new(pos), 7)
+                    if not target then task.wait(0.1) end
+                until target or not Playing or session ~= CurrentSession
+
+                if target then
+                    upgradeRemote:InvokeServer(target.Name)
+                end
 
             elseif job.Type == "sell" then
                 local pos = tableToVec(job.Position)
-                local target = nearModelByCFrame(CFrame.new(pos), 7)
-                if target then sellRemote:InvokeServer(target.Name) end
-            end
+                local target
+                repeat
+                    target = nearModelByCFrame(CFrame.new(pos), 7)
+                    if not target then task.wait(0.1) end
+                until target or not Playing or session ~= CurrentSession
 
-            task.wait(0.5)
+                if target then
+                    sellRemote:InvokeServer(target.Name)
+                end
+            end
         end
     end
 
