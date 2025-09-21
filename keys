@@ -100,14 +100,14 @@ statusLabel.Size = UDim2.new(1, 0, 0, 25)
 
 -- ✅ Function Check Key
 local function doCheck()
-    Notif.New("🔄 Đang kiểm tra key...", 2)
+    Notif.New("🔄 Checking key...", 2)
     statusLabel.Text = "🔄 Checking key..."
     local isValid, message = ValidateKey(textbox.Text, Identifier, hwid)
     if isValid then
         statusLabel.Text = "✔️ Key is valid!"
         statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
         if writefile then writefile(keyFile, textbox.Text) end
-        Notif.New("✔️ Key hợp lệ! Đang tải script...", 3)
+        Notif.New("✔️ Key is valid!", 3)
         task.wait(1)
         gui.Enabled = false
         loadstring(game:HttpGet("https://raw.githubusercontent.com/thaemmayanh/hub/refs/heads/main/AC.lua"))()
@@ -140,16 +140,16 @@ Instance.new("UICorner", getKeyBtn).CornerRadius = UDim.new(0, 6)
 getKeyBtn.MouseButton1Click:Connect(function()
     local keyLink = GetKeyLink(Identifier, hwid)
     if setclipboard then setclipboard(keyLink) end
-    Notif.New("🔗 Link GetKey đã copy!", 3)
+    Notif.New("Copied the link!", 3)
 end)
 
 -- 🔁 Auto-check key
 if savedKey ~= "" then
-    Notif.New("🔄 Đang kiểm tra key...", 2)
+    Notif.New("🔄 Checking key...", 2)
     local isValid, message = ValidateKey(savedKey, Identifier, hwid)
     if isValid then
         if writefile then writefile(keyFile, savedKey) end
-        Notif.New("✔️ Key hợp lệ! Đang tải script...", 3)
+        Notif.New("✔️ Key is valid!", 3)
         loadstring(game:HttpGet("https://raw.githubusercontent.com/thaemmayanh/hub/refs/heads/main/AC.lua"))()
     else
         gui.Enabled = true
