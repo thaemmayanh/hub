@@ -1,160 +1,183 @@
-repeat task.wait() until game:IsLoaded()
+--[[ 
+    Notify Lib by me: mr.xrer
+    Changelog:
+        25.07.2023:
+            - Time argument, autoclose
+            - Better animations
+--]]
+local Notif = {}
 
---// Panda Ov2.5 Key System + UI
-local HttpService = game:GetService("HttpService")
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
+local CoreGUI = game:GetService("CoreGui")
+local TS = game:GetService("TweenService")
 
--- 🔔 Load Custom Notification
-local Notif = loadstring(game:HttpGet("https://raw.githubusercontent.com/thaemmayanh/hub/refs/heads/main/notif"))() -- hoặc dán trực tiếp code Notif bạn gửi ở trên
-
--- 🆔 CONFIG
-local Identifier = "pia"
-local keyFile = "piahubkey.txt"
-local savedKey = isfile and isfile(keyFile) and readfile(keyFile) or ""
-local hwid = tostring(LocalPlayer.UserId)
-
--- ✅ Validate Key Function (Ov2.5)
-local function ValidateKey(key, serviceId, hwid)
-    local validationUrl = "https://pandadevelopment.net/v2_validation?key=" .. key .. "&service=" .. serviceId .. "&hwid=" .. hwid
-    local success, responseBody
-
-    if syn and syn.request then
-        local res = syn.request({Url = validationUrl, Method = "GET"})
-        if res and res.StatusCode == 200 then success, responseBody = true, res.Body end
-    elseif http_request then
-        local res = http_request({Url = validationUrl, Method = "GET"})
-        if res and res.StatusCode == 200 then success, responseBody = true, res.Body end
-    elseif request then
-        local res = request({Url = validationUrl, Method = "GET"})
-        if res and res.StatusCode == 200 then success, responseBody = true, res.Body end
+local HIDEUI = get_hidden_gui or gethui
+if syn and typeof(syn) == "table" and RenderWindow then syn.protect_gui = gethui; end
+local function Hide_UI(gui)
+    if HIDEUI then
+        gui["Parent"] = HIDEUI()
+    elseif (not is_sirhurt_closure) and (syn and syn.protect_gui) then
+        syn.protect_gui(gui)
+        gui["Parent"] = CoreGUI
+    elseif CoreGUI:FindFirstChild('RobloxGui') then
+        gui["Parent"] = CoreGUI.RobloxGui
     else
-        local ok, res = pcall(function()
-            return HttpService:RequestAsync({Url = validationUrl, Method = "GET"})
-        end)
-        if ok and res and res.Success then success, responseBody = true, res.Body end
+        gui["Parent"] = CoreGUI
     end
-
-    if not responseBody then return false, "No response from server" end
-    local ok, data = pcall(function() return HttpService:JSONDecode(responseBody) end)
-    if not ok or not data then return false, "Failed to decode JSON" end
-
-    return data["V2_Authentication"] == "success", data["reason"] or "Invalid or expired key"
 end
 
--- 🔗 Get Key Link
-local function GetKeyLink(serviceId, hwid)
-    return "https://pandadevelopment.net/getkey?service=" .. serviceId .. "&hwid=" .. hwid
-end
+local screen_gui = Instance.new("ScreenGui")
+Hide_UI(screen_gui)
 
--- 🖥 UI
-local gui = Instance.new("ScreenGui", game.CoreGui)
-gui.Name = "PIAHUBKEY"
-gui.Enabled = false
-
-local frame = Instance.new("Frame", gui)
-frame.Size = UDim2.new(0, 350, 0, 180)
-frame.Position = UDim2.new(0.5, -175, 0.5, -90)
-frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+local frame = Instance.new("Frame")
+frame.AnchorPoint = Vector2.new(0.5, 0.949999988079071)
+frame.BackgroundColor3 = Color3.new(1, 1, 1)
+frame.BackgroundTransparency = 1
+frame.BorderColor3 = Color3.new(0, 0, 0)
 frame.BorderSizePixel = 0
-Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
+frame.Position = UDim2.new(0.5, 0, 0.954999983, 0)
+frame.Size = UDim2.new(0, 100, 0, 100)
+frame.Visible = true
+frame.Parent = screen_gui
 
-local title = Instance.new("TextLabel", frame)
-title.Text = "PIAHUB KEY SYSTEM"
-title.Font = Enum.Font.GothamBold
-title.TextSize = 20
-title.TextColor3 = Color3.fromRGB(255, 255, 255)
-title.BackgroundTransparency = 1
-title.Size = UDim2.new(1, -30, 0, 30)
-title.Position = UDim2.new(0, 10, 0, 5)
+local uilist_layout = Instance.new("UIListLayout")
+uilist_layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+uilist_layout.SortOrder = Enum.SortOrder.LayoutOrder
+uilist_layout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+uilist_layout.Parent = frame
+	
+function Notif.New(text, timee)
+    local frame_2 = Instance.new("Frame")
+    frame_2.BackgroundColor3 = Color3.new(1, 1, 1)
+    frame_2.BorderColor3 = Color3.new(0, 0, 0)
+    frame_2.BorderSizePixel = 0
+    frame_2.BackgroundTransparency = 1
+    frame_2.Size = UDim2.new(0, 100, 0, 0)
+    frame_2.Visible = true
+    frame_2.Parent = frame
+	
+    -- Main Notification Frame
+    local frame_3 = Instance.new("Frame")
+    frame_3.AnchorPoint = Vector2.new(0.5, 1)
+    frame_3.AutomaticSize = Enum.AutomaticSize.X
+    frame_3.BackgroundColor3 = Color3.new(0.141176, 0.141176, 0.141176)
+    frame_3.BackgroundTransparency = 0.20000000298023224
+    frame_3.BorderColor3 = Color3.new(0, 0, 0)
+    frame_3.Position = UDim2.new(0.5, 0, 1, 60)
+    frame_3.Size = UDim2.new(0, 0, 0, 30)
+    frame_3.Visible = true
+    frame_3.Parent = frame_2
 
-local closeBtn = Instance.new("TextButton", frame)
-closeBtn.Size = UDim2.new(0, 25, 0, 25)
-closeBtn.Position = UDim2.new(1, -30, 0, 5)
-closeBtn.Text = "X"
-closeBtn.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
-closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 5)
-closeBtn.MouseButton1Click:Connect(function() gui.Enabled = false end)
+    local uicorner = Instance.new("UICorner")
+    uicorner.CornerRadius = UDim.new(0, 6)
+    uicorner.Parent = frame_3
 
-local textbox = Instance.new("TextBox", frame)
-textbox.PlaceholderText = "Enter your key here"
-textbox.Text = savedKey
-textbox.Font = Enum.Font.Gotham
-textbox.TextSize = 16
-textbox.TextColor3 = Color3.fromRGB(255, 255, 255)
-textbox.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-textbox.Size = UDim2.new(0.9, 0, 0, 35)
-textbox.Position = UDim2.new(0.05, 0, 0, 50)
-textbox.ClearTextOnFocus = false
-Instance.new("UICorner", textbox).CornerRadius = UDim.new(0, 6)
+    local uipadding = Instance.new("UIPadding")
+    uipadding.PaddingBottom = UDim.new(0, 3)
+    uipadding.PaddingLeft = UDim.new(0, 3)
+    uipadding.PaddingRight = UDim.new(0, 3)
+    uipadding.PaddingTop = UDim.new(0, 3)
+    uipadding.Parent = frame_3
 
-local statusLabel = Instance.new("TextLabel", frame)
-statusLabel.Text = ""
-statusLabel.Font = Enum.Font.Gotham
-statusLabel.TextSize = 14
-statusLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-statusLabel.BackgroundTransparency = 1
-statusLabel.Position = UDim2.new(0, 0, 1, -25)
-statusLabel.Size = UDim2.new(1, 0, 0, 25)
+    local uistroke = Instance.new("UIStroke")
+    uistroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    uistroke.Color = Color3.new(0.0313726, 0.0313726, 0.0313726)
+    uistroke.Parent = frame_3
 
--- ✅ Function Check Key
-local function doCheck()
-    Notif.New("🔄 Checking key...", 2)
-    statusLabel.Text = "🔄 Checking key..."
-    local isValid, message = ValidateKey(textbox.Text, Identifier, hwid)
-    if isValid then
-        statusLabel.Text = "✔️ Key is valid!"
-        statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
-        if writefile then writefile(keyFile, textbox.Text) end
-        Notif.New("✔️ Key is valid!", 3)
-        task.wait(1)
-        gui.Enabled = false
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/thaemmayanh/hub/refs/heads/main/AC.lua"))()
-    else
-        statusLabel.Text = "❌ " .. message
-        statusLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
+    local text_label = Instance.new("TextLabel")
+    text_label.Font = Enum.Font.Gotham
+    text_label.Text = text
+    text_label.TextColor3 = Color3.new(0.784314, 0.784314, 0.784314)
+    text_label.TextSize = 14
+    text_label.AutomaticSize = Enum.AutomaticSize.X
+    text_label.BackgroundColor3 = Color3.new(1, 1, 1)
+    text_label.BackgroundTransparency = 1
+    text_label.BorderColor3 = Color3.new(0, 0, 0)
+    text_label.BorderSizePixel = 0
+    text_label.Size = UDim2.new(0, 0, 0, 24)
+    text_label.Visible = true
+    text_label.Parent = frame_3
+
+    local uipadding_2 = Instance.new("UIPadding")
+    uipadding_2.PaddingLeft = UDim.new(0, 5)
+    uipadding_2.PaddingRight = UDim.new(0, 30)
+    uipadding_2.Parent = text_label
+
+    local text_button = Instance.new("TextButton")
+    text_button.Font = Enum.Font.SourceSans
+    text_button.Text = ""
+    text_button.TextColor3 = Color3.new(0, 0, 0)
+    text_button.TextSize = 14
+    text_button.AnchorPoint = Vector2.new(1, 0.5)
+    text_button.BackgroundColor3 = Color3.new(0, 0, 0)
+    text_button.BackgroundTransparency = 1
+    text_button.BorderColor3 = Color3.new(0, 0, 0)
+    text_button.BorderSizePixel = 0
+    text_button.Position = UDim2.new(1, 0, 0.5, 0)
+    text_button.Size = UDim2.new(0, 24, 0, 24)
+    text_button.Visible = true
+    text_button.Parent = frame_3
+
+    local uicorner_2 = Instance.new("UICorner")
+    uicorner_2.CornerRadius = UDim.new(0, 5)
+    uicorner_2.Parent = text_button
+
+    local image_button = Instance.new("ImageButton")
+    image_button.Image = "rbxassetid://3926305904"
+    image_button.ImageColor3 = Color3.new(0.784314, 0.784314, 0.784314)
+    image_button.ImageRectOffset = Vector2.new(924, 724)
+    image_button.ImageRectSize = Vector2.new(36, 36)
+    image_button.AnchorPoint = Vector2.new(0.5, 0.5)
+    image_button.BackgroundTransparency = 1
+    image_button.LayoutOrder = 3
+    image_button.Position = UDim2.new(0.5, 0, 0.5, 0)
+    image_button.Size = UDim2.new(0, 18, 0, 18)
+    image_button.Visible = true
+    image_button.ZIndex = 2
+    image_button.Parent = text_button
+
+    --Animations
+    TS:Create(frame_3, TweenInfo.new(0.2, Enum.EasingStyle.Quint), { Position = UDim2.new(0.5, 0, 1, 0) }):Play()
+    TS:Create(frame_2, TweenInfo.new(0.2, Enum.EasingStyle.Quint), { Size = UDim2.new(0, 100, 0, 35) }):Play()
+
+    -- Close Button
+    local function close_notif()
+        TS:Create(image_button, TweenInfo.new(0.15, Enum.EasingStyle.Quint), { ImageTransparency = 1 }):Play()
+        TS:Create(text_button, TweenInfo.new(0.15, Enum.EasingStyle.Quint), { BackgroundTransparency = 1 }):Play()
+        TS:Create(text_label, TweenInfo.new(0.15, Enum.EasingStyle.Quint), { TextTransparency = 1 }):Play()
+        task.wait(.17)
+        TS:Create(frame_3, TweenInfo.new(0.25, Enum.EasingStyle.Quint), { BackgroundTransparency = 1 }):Play()
+        TS:Create(uistroke, TweenInfo.new(0.24, Enum.EasingStyle.Quint), { Transparency = 1 }):Play()
+        task.wait(.05)
+        TS:Create(frame_2, TweenInfo.new(0.2, Enum.EasingStyle.Quint), { Size = UDim2.new(0, 100, 0, 0) }):Play()
+        task.wait(.2)
+        frame_2:Destroy()
     end
+    text_button.MouseEnter:Connect(function()
+        TS:Create(text_button, TweenInfo.new(0.25, Enum.EasingStyle.Quint), { BackgroundTransparency = 0.8 }):Play()
+        TS:Create(image_button, TweenInfo.new(0.3, Enum.EasingStyle.Quint),
+            { ImageColor3 = Color3.new(0.890196, 0.054902, 0.054902) }):Play()
+    end)
+
+    text_button.MouseLeave:Connect(function()
+        TS:Create(text_button, TweenInfo.new(0.25, Enum.EasingStyle.Quint), { BackgroundTransparency = 1 }):Play()
+        TS:Create(image_button, TweenInfo.new(0.3, Enum.EasingStyle.Quint),
+            { ImageColor3 = Color3.new(0.784314, 0.784314, 0.784314) }):Play()
+    end)
+
+    text_button.MouseButton1Click:Connect(function()
+        TS:Create(image_button, TweenInfo.new(0.15, Enum.EasingStyle.Quint), { ImageTransparency = 1 }):Play()
+        TS:Create(text_button, TweenInfo.new(0.15, Enum.EasingStyle.Quint), { BackgroundTransparency = 1 }):Play()
+        TS:Create(text_label, TweenInfo.new(0.15, Enum.EasingStyle.Quint), { TextTransparency = 1 }):Play()
+        task.wait(.17)
+        TS:Create(frame_3, TweenInfo.new(0.25, Enum.EasingStyle.Quint), { BackgroundTransparency = 1 }):Play()
+        TS:Create(uistroke, TweenInfo.new(0.24, Enum.EasingStyle.Quint), { Transparency = 1 }):Play()
+        task.wait(.05)
+        TS:Create(frame_2, TweenInfo.new(0.2, Enum.EasingStyle.Quint), { Size = UDim2.new(0, 100, 0, 0) }):Play()
+        task.wait(.2)
+        frame_2:Destroy()
+    end)
+    image_button.MouseButton1Click:Connect(close_notif)
+    task.delay(tonumber(timee) and timee or 10, close_notif)
 end
 
-local checkBtn = Instance.new("TextButton", frame)
-checkBtn.Text = "✅ Check Key"
-checkBtn.Font = Enum.Font.GothamBold
-checkBtn.TextSize = 16
-checkBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-checkBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
-checkBtn.Size = UDim2.new(0.45, -5, 0, 35)
-checkBtn.Position = UDim2.new(0.05, 0, 0, 100)
-Instance.new("UICorner", checkBtn).CornerRadius = UDim.new(0, 6)
-checkBtn.MouseButton1Click:Connect(doCheck)
-
-local getKeyBtn = Instance.new("TextButton", frame)
-getKeyBtn.Text = "🔗 Get Key"
-getKeyBtn.Font = Enum.Font.GothamBold
-getKeyBtn.TextSize = 16
-getKeyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-getKeyBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-getKeyBtn.Size = UDim2.new(0.45, -5, 0, 35)
-getKeyBtn.Position = UDim2.new(0.5, 5, 0, 100)
-Instance.new("UICorner", getKeyBtn).CornerRadius = UDim.new(0, 6)
-getKeyBtn.MouseButton1Click:Connect(function()
-    local keyLink = GetKeyLink(Identifier, hwid)
-    if setclipboard then setclipboard(keyLink) end
-    Notif.New("Copied the link!", 3)
-end)
-
--- 🔁 Auto-check key
-if savedKey ~= "" then
-    Notif.New("🔄 Checking key...", 2)
-    local isValid, message = ValidateKey(savedKey, Identifier, hwid)
-    if isValid then
-        if writefile then writefile(keyFile, savedKey) end
-        Notif.New("✔️ Key is valid!", 3)
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/thaemmayanh/hub/refs/heads/main/AC.lua"))()
-    else
-        gui.Enabled = true
-        Notif.New("❌ " .. (message or "Key check failed"), 3)
-    end
-else
-    gui.Enabled = true
-end
+return Notif
