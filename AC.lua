@@ -1,13 +1,9 @@
 repeat task.wait() until game:IsLoaded()
 
--- 🧼 Xoá GUI cũ nếu tồn tại
-pcall(function()
-    local oldUI = game.CoreGui:FindFirstChild("MacLib")
-    if oldUI then oldUI:Destroy() end
-    local oldWin = game.CoreGui:FindFirstChild("ScreenGui")
-    if oldWin then oldWin:Destroy() end
-end)
-
+-- ⚠️ Ngăn tạo nhiều GUI
+if getgenv()._PiaHubarxLoaded then
+    return
+end
 getgenv()._PiaHubarxLoaded = true
 
 local vu = game:GetService("VirtualUser")
@@ -21,9 +17,10 @@ local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
+local WS = game:GetService("Workspace")
 
 --// Lib
-local MacLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/thaemmayanh/thaem/refs/heads/main/lib"))()
+local MacLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/thaemmayanh/thaem/main/lib"))()
 
 --// Setup Settings
 local folderName   = "PIAHUB"
@@ -53,7 +50,22 @@ local defaultSettings = {
     autoJoin = false,
     autoFind = false,
     autoJoinAct = "Act 1",
-
+    selectedPortal   = "Marine Ford Portal",
+    autoJoinPortal   = false,
+    smartAutoPlace = false,
+    showHistogram = false,
+    distancePct = 100,
+    hillPct = 100,
+    groundPct = 100,
+    placeCap = {4,4,4,4,4,4},
+    upgradeCap = {10,10,10},
+    autoStart = false,
+    startDelay = 1,
+    ignoreChallenge = {},     
+    autoJoinChallenge = false,
+    autoLeaveChallenge = false,
+    autoExecute = false,
+    smoothMap = false,
 }
 
 -- Hàm load/save settings
@@ -89,7 +101,6 @@ end
 ----------------------------------------------------------------
 -- 🆕 Auto Join Logic
 ----------------------------------------------------------------
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local endpoints = ReplicatedStorage:WaitForChild("endpoints"):WaitForChild("client_to_server")
 
 local requestJoinLobby       = endpoints:WaitForChild("request_join_lobby")
@@ -98,13 +109,30 @@ local requestStartGame       = endpoints:WaitForChild("request_start_game")
 local requestInfinite        = endpoints:WaitForChild("request_infinite_leaderboard")
 local requestMatchmaking     = endpoints:WaitForChild("request_matchmaking")
 
+-- helper start game (chỉ chạy khi Auto Start bật)
+local function SafeStart(lobbyId)
+    if not settings.autoStart then
+        return -- ❌ nếu autoStart tắt thì không start
+    end
+
+    task.spawn(function()
+        local delaySec = tonumber(settings.startDelay) or 0
+        if delaySec > 0 then
+            for i = delaySec, 1, -1 do
+                warn("[AUTO START] Starting in " .. i .. "s...")
+                task.wait(1)
+            end
+        end
+        requestStartGame:InvokeServer(lobbyId)
+    end)
+end
+
 ----------------------------------------------------------------
 -- 🆕 Auto Join Logic (Story / Infinite / Legend / Raid)
 ----------------------------------------------------------------
 local function RunAutoJoin()
     -- chỉ hoạt động khi ở lobby
     if game.PlaceId ~= 107573139811370 then return end
-
     if not settings.autoJoinMode or settings.autoJoinMap == "" then return end
 
     local mode  = settings.autoJoinMode
@@ -116,27 +144,28 @@ local function RunAutoJoin()
     -- 🏠 Chế độ Join Map
     if settings.autoJoin then
         if mode == "story" then
-            requestJoinLobby:InvokeServer("P1")
+            requestJoinLobby:InvokeServer("P7")
             local levelName = map.."_level_"..actIndex
-            requestLockLevel:InvokeServer("P1", levelName, false, diff)
-            requestStartGame:InvokeServer("P1")
+            requestLockLevel:InvokeServer("P7", levelName, false, diff)
+            SafeStart("P7")
 
         elseif mode == "infinite" then
-            requestJoinLobby:InvokeServer("P1")
+            requestJoinLobby:InvokeServer("P7")
             requestInfinite:InvokeServer(map.."_infinite")
-            requestStartGame:InvokeServer("P1")
+             requestLockLevel:InvokeServer("P7", map.."_infinite", false, "Hard")
+            SafeStart("P7")
 
         elseif mode == "legend stage" then
-            requestJoinLobby:InvokeServer("P1")
+            requestJoinLobby:InvokeServer("P7")
             local levelName = map.."_legend_"..actIndex
-            requestLockLevel:InvokeServer("P1", levelName, false, "Hard")
-            requestStartGame:InvokeServer("P1")
+            requestLockLevel:InvokeServer("P7", levelName, false, "Hard")
+            SafeStart("P7")
 
         elseif mode == "raid" then
-            requestJoinLobby:InvokeServer("R1")
+            requestJoinLobby:InvokeServer("R3")
             local levelName = map.."_Raid_"..actIndex
-            requestLockLevel:InvokeServer("R1", levelName, false, "Hard")
-            requestStartGame:InvokeServer("R1")
+            requestLockLevel:InvokeServer("R3", levelName, false, "Hard")
+            SafeStart("R3")
         end
     end
 
@@ -164,15 +193,40 @@ local function RunAutoJoin()
     end
 end
 
--- Loop chạy auto join
-task.spawn(function()
-    while task.wait(3) do
-        if settings.autoJoin or settings.autoFind then
-            RunAutoJoin()
+--/// PORTAL
+local usePortal = endpoints:WaitForChild("use_portal")
+local requestStartGame = endpoints:WaitForChild("request_start_game")
+
+local function AutoJoinPortal()
+    if not settings.autoJoinPortal then return end
+
+    local itemFrames = LocalPlayer:WaitForChild("PlayerGui")
+        :WaitForChild("items")
+        :WaitForChild("grid")
+        :WaitForChild("List")
+        :WaitForChild("Outer")
+        :WaitForChild("ItemFrames")
+
+    for _, frame in ipairs(itemFrames:GetChildren()) do
+        if frame.Name:sub(1,7) == "portal_" then
+            local uuidVal = frame:FindFirstChild("_uuid_or_id")
+            local nameLbl = frame:FindFirstChild("name")
+
+            if uuidVal and nameLbl and nameLbl:IsA("TextLabel") then
+                if nameLbl.Text == settings.selectedPortal then
+                    local uuid = uuidVal.Value
+                    print("[AUTO PORTAL] Found:", nameLbl.Text, uuid)
+
+                    usePortal:InvokeServer(uuid)
+                    task.wait(1)
+                    requestStartGame:InvokeServer(uuid)
+
+                    break
+                end
+            end
         end
     end
-end)
-
+end
 
 ----------------------------------------------------------------
 -- Hàm xử lý End Game Jobs
@@ -269,13 +323,109 @@ local function AutoInGame()
     end
 end
 
--- Loop chạy auto
+----------------------------------------------------------------
+-- ⚔️ Auto Join Challenge
+----------------------------------------------------------------
+local function RunAutoJoinChallenge()
+    if game.PlaceId ~= 107573139811370 then return false end -- chỉ chạy khi ở lobby
+    if not settings.autoJoinChallenge then return false end
+
+    local challengeVal = workspace:WaitForChild("_CHALLENGES")
+        :WaitForChild("Challenges")
+        :WaitForChild("ChallengePod5")
+        :WaitForChild("Challenge").Value
+
+    -- Nếu challenge trong danh sách ignore thì bỏ qua
+    if table.find(settings.ignoreChallenge or {}, challengeVal) then
+        warn("[CHALLENGE] Ignored:", challengeVal)
+        return false -- ignored → cho phép join khác chạy
+    end
+
+    -- Ngược lại thì join challenge
+    local args = {"ChallengePod5"}
+    game:GetService("ReplicatedStorage")
+        :WaitForChild("endpoints")
+        :WaitForChild("client_to_server")
+        :WaitForChild("request_join_lobby")
+        :InvokeServer(unpack(args))
+
+    -- Nếu Auto Start bật thì gọi SafeStart
+    if settings.autoStart then
+        task.delay(1, function()
+            SafeStart("ChallengePod5")
+        end)
+    end
+
+    return true -- đã join challenge → chặn join khác
+end
+
+----------------------------------------------------------------
+-- 🏃 Auto Leave Challenge
+----------------------------------------------------------------
+local function RunAutoJoinChallenge()
+    if game.PlaceId ~= 107573139811370 then return false end
+    if not settings.autoJoinChallenge then return false end
+
+    local challengeVal = workspace:WaitForChild("_CHALLENGES")
+        :WaitForChild("Challenges")
+        :WaitForChild("ChallengePod5")
+        :WaitForChild("Challenge").Value
+
+    if table.find(settings.ignoreChallenge or {}, challengeVal) then
+        warn("[CHALLENGE] Ignored:", challengeVal)
+        return false
+    end
+
+    local args = {"ChallengePod5"}
+    game:GetService("ReplicatedStorage")
+        :WaitForChild("endpoints")
+        :WaitForChild("client_to_server")
+        :WaitForChild("request_join_lobby")
+        :InvokeServer(unpack(args))
+
+    if settings.autoStart then
+        task.delay(1, function()
+            SafeStart("ChallengePod5")
+        end)
+    end
+
+    return true
+end
+
+----------------------------------------------------------------
+-- 🌐 RunAuto: gom tất cả auto join
+----------------------------------------------------------------
+local function RunAuto()
+    -- Chỉ chạy ở lobby
+    if game.PlaceId ~= 107573139811370 then return end
+
+    -- Ưu tiên Challenge
+    if settings.autoJoinChallenge then
+        local joined = RunAutoJoinChallenge()
+        if joined then
+            return -- đã join Challenge thì bỏ qua join khác
+        end
+    end
+
+    -- Nếu challenge bị ignore hoặc toggle off thì join khác
+    if settings.autoJoin or settings.autoFind then
+        RunAutoJoin()
+    end
+
+    if settings.autoGate or settings.autoFindGate then
+        AutoLobby()
+        AutoInGame()
+    end
+
+    if settings.autoJoinPortal then
+        AutoJoinPortal()
+    end
+end
+
+-- Loop chính
 task.spawn(function()
     while task.wait(3) do
-        if settings.autoGate or settings.autoFindGate then
-            AutoLobby()
-            AutoInGame()
-        end
+        RunAuto()
     end
 end)
 
@@ -675,6 +825,403 @@ results:GetPropertyChangedSignal("Enabled"):Connect(function()
     end
 end)
 
+---------------------------------------------------------------
+-- ⚡ Auto Place Logic
+---------------------------------------------------------------
+local RS = game:GetService("ReplicatedStorage")
+local WS = game:GetService("Workspace")
+local Players = game:GetService("Players")
+local LP = Players.LocalPlayer
+
+local moduleCache = {}
+
+local function findModule(unitId)
+    if moduleCache[unitId] then return moduleCache[unitId] end
+    local Units = RS.Framework.Data.Units
+    for _, folder in ipairs(Units:GetChildren()) do
+        for _, mod in ipairs(folder:GetChildren()) do
+            if mod:IsA("ModuleScript") then
+                local ok, data = pcall(require, mod)
+                if ok and type(data) == "table" then
+                    for _, v in pairs(data) do
+                        if type(v) == "table" and v.id == unitId then
+                            moduleCache[unitId] = {
+                                raw = v,
+                                id = v.id,
+                                cost = v.cost or 0,
+                                spawn_cap = v.spawn_cap or 0,
+                                hill_unit = v.hill_unit,
+                                upgrade = v.upgrade
+                            }
+                            return moduleCache[unitId]
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+local FX_CACHE = RS:WaitForChild("_FX_CACHE")
+
+-- 🔍 Lấy toàn bộ unit equip theo GUI slot
+local function getEquippedUnits()
+    local equippedList = {}
+    local UnitsGui = LP.PlayerGui:WaitForChild("spawn_units").Lives.Frame.Units
+
+    for slot = 1, 6 do
+        local slotFrame = UnitsGui:FindFirstChild(tostring(slot))
+        if slotFrame 
+            and slotFrame:FindFirstChild("Main") 
+            and slotFrame.Main:FindFirstChild("petimage") 
+            and slotFrame.Main.petimage:FindFirstChild("WorldModel") then
+
+            local wm = slotFrame.Main.petimage.WorldModel
+            local model = wm:FindFirstChildWhichIsA("Model")
+
+            if model then
+                local unitId = model.Name
+                if string.find(unitId, ":") then
+                    unitId = string.split(unitId, ":")[1]
+                end
+
+                -- tìm uuid trong FX_CACHE
+                local uuid
+                for _, frame in ipairs(FX_CACHE:GetChildren()) do
+                    if frame:IsA("ImageButton") and frame:GetAttribute("ITEMINDEX") == unitId then
+                        local uuidObj = frame:FindFirstChild("_uuid")
+                        uuid = uuidObj and uuidObj.Value
+                    end
+                end
+
+                local data = findModule(unitId)
+                table.insert(equippedList, {
+                    slot = slot,
+                    name = unitId,
+                    uuid = uuid,
+                    cost = data and data.cost or 0,
+                    type = data and (data.hill_unit and "HILL" or "GROUND") or "???",
+                    spawn_cap = data and data.spawn_cap or 0,
+                    upgrades = data and data.upgrade or {}
+                })
+            end
+        end
+    end
+
+    return equippedList
+end
+
+---------------------------------------------------------------
+-- 🛣️ Fake Road Generation (để tránh spawn trên đường đi)
+---------------------------------------------------------------
+local lanes = WS._BASES.pve.LANES
+local roadFolder = WS:FindFirstChild("FakeRoad") or Instance.new("Folder")
+roadFolder.Name, roadFolder.Parent = "FakeRoad", WS
+
+local function createRoad(fromPart, toPart)
+    if not fromPart or not toPart then return end
+    local startPos, endPos = fromPart.Position, toPart.Position
+    local distance = (endPos - startPos).Magnitude
+    local road = Instance.new("Part")
+    road.Size = Vector3.new(2, 0.5, distance)
+    road.CFrame = CFrame.new(startPos, endPos) * CFrame.new(0, 0, -distance/2)
+    road.Anchored, road.CanCollide = true, false
+    road.Transparency, road.Color = 1, Color3.fromRGB(50, 50, 50)
+    road.Name, road.Parent = "FakeRoad", roadFolder
+end
+
+for _, lane in ipairs(lanes:GetChildren()) do
+    if lane:FindFirstChild("spawn") and lane:FindFirstChild("final") then
+        local checkpoints = { lane.spawn }
+        local i = 1
+        while lane:FindFirstChild(tostring(i)) do
+            table.insert(checkpoints, lane[tostring(i)])
+            i += 1
+        end
+        table.insert(checkpoints, lane.final)
+        for idx = 1, #checkpoints-1 do
+            createRoad(checkpoints[idx], checkpoints[idx+1])
+        end
+    end
+end
+----------------------------------------------------------------
+-- ⚡ Auto Place (chuẩn logic gốc + UI placeCap)
+----------------------------------------------------------------
+if game.PlaceId ~= 107573139811370 then
+    local UnitsFolder = WS:WaitForChild("_UNITS")
+    local lanes = WS._BASES.pve.LANES
+    local FakeRoad = WS:FindFirstChild("FakeRoad")
+    local FailedFlags = {}
+
+    -- Collect terrain
+    local function collectTerrainParts(parent)
+        local list = {}
+        for _, obj in ipairs(parent:GetDescendants()) do
+            if obj:IsA("Part") or obj:IsA("MeshPart") or obj:IsA("UnionOperation") then
+                table.insert(list, obj)
+            end
+        end
+        return list
+    end
+
+    local GroundAreas = collectTerrainParts(WS._terrain.ground)
+    local HillAreas = collectTerrainParts(WS._terrain.hill)
+
+    -- Raycast
+    local function getSurfacePos(pos)
+        local rayOrigin = pos + Vector3.new(0, 20, 0)
+        local rayDir = Vector3.new(0, -100, 0)
+        local params = RaycastParams.new()
+        params.FilterDescendantsInstances = {workspace._terrain}
+        params.FilterType = Enum.RaycastFilterType.Whitelist
+        local result = workspace:Raycast(rayOrigin, rayDir, params)
+        return result and (result.Position + Vector3.new(0, 1.5, 0)) or nil
+    end
+
+    -- Check valid pos
+    local function isValidPos(pos, unitType)
+        for _, r in ipairs(FakeRoad:GetChildren()) do
+            if r:IsA("BasePart") then
+                local localPos = r.CFrame:PointToObjectSpace(pos)
+                if math.abs(localPos.X) <= (r.Size.X/2 + 0.5)
+                and math.abs(localPos.Y) <= (r.Size.Y/2 + 5)
+                and math.abs(localPos.Z) <= (r.Size.Z/2 + 0.5) then
+                    return false
+                end
+            end
+        end
+        for _, u in ipairs(UnitsFolder:GetChildren()) do
+            if u:FindFirstChild("HumanoidRootPart") and u:FindFirstChild("_stats") then
+                if u._stats:FindFirstChild("player") and u._stats.player.Value == LP then
+                    if (u.HumanoidRootPart.Position - pos).Magnitude < 2 then
+                        return false
+                    end
+                end
+            end
+        end
+        for _, f in ipairs(FailedFlags) do
+            if (f - pos).Magnitude < 1 then
+                return false
+            end
+        end
+        local surface = getSurfacePos(pos)
+        if not surface then return false end
+        return true
+    end
+
+    -- Count units
+    local function countUnits(uuidMain)
+        local c = 0
+        for _, u in ipairs(UnitsFolder:GetChildren()) do
+            if u.Name:sub(1,#uuidMain) == uuidMain then
+                c += 1
+            end
+        end
+        return c
+    end
+
+    -- Candidates
+    local function getCandidatePositions(basePos, step, radius)
+        local list = {}
+        for x = -radius, radius, step do
+            for z = -radius, radius, step do
+                table.insert(list, basePos + Vector3.new(x, 0, z))
+            end
+        end
+        return list
+    end
+
+    -- Best pos
+    local function findBestPos(basePos, unitType)
+        local candidates = getCandidatePositions(basePos, 2, 8)
+        local best, bestDist
+        for _, pos in ipairs(candidates) do
+            local surface = getSurfacePos(pos)
+            if surface and isValidPos(surface, unitType) then
+                local dist = (surface - basePos).Magnitude
+                if not best or dist < bestDist then
+                    best, bestDist = surface, dist
+                end
+            end
+        end
+        return best
+    end
+
+    -- Checkpoints
+    local function getCheckpoints()
+        local cps = {}
+        local lane = lanes["1"]
+        if not lane then return cps end
+        table.insert(cps, lane.spawn)
+        local i = 1
+        while lane:FindFirstChild(tostring(i)) do
+            table.insert(cps, lane[tostring(i)])
+            i += 1
+        end
+        table.insert(cps, lane.final)
+        return cps
+    end
+
+    -- Enemy progress
+    local function getEnemyProgress(enemy, cps)
+        local hrp = enemy:FindFirstChild("HumanoidRootPart")
+        if not hrp then return 0, cps[#cps] end
+        for idx = 1, #cps-1 do
+            local cp, nextCp = cps[idx], cps[idx+1]
+            local d1 = (hrp.Position - cp.Position).Magnitude
+            local d2 = (hrp.Position - nextCp.Position).Magnitude
+            local segLen = (nextCp.Position - cp.Position).Magnitude
+            if d1 < 8 then return idx, nextCp end
+            if math.abs((d1 + d2) - segLen) < 10 then
+                return idx, nextCp
+            end
+        end
+        return #cps-1, cps[#cps]
+    end
+
+    -- Lead enemy
+    local function getLeadEnemyAndTarget()
+        local cps = getCheckpoints()
+        if #cps < 2 then return nil, nil end
+        local lead, leadTarget
+        local bestProgress = -math.huge
+        for _, m in ipairs(UnitsFolder:GetChildren()) do
+            if m.Name:sub(1,3) == "pve" and m:FindFirstChild("HumanoidRootPart") then
+                local idx, target = getEnemyProgress(m, cps)
+                local hrp = m.HumanoidRootPart
+                local cp = cps[idx]
+                local distFromCp = (hrp.Position - cp.Position).Magnitude
+                local progress = idx * 1000 - distFromCp
+                if progress > bestProgress then
+                    bestProgress = progress
+                    lead, leadTarget = m, target
+                end
+            end
+        end
+        return lead, leadTarget
+    end
+
+    -- Auto Place Unit (dựa theo placeCap)
+    local function autoPlace(unit, slotCap)
+        if not unit.uuid then return end
+        local maxCap = math.min(slotCap, unit.spawn_cap or 0)
+        if countUnits(unit.uuid) >= maxCap then return end
+        if LP._stats and LP._stats:FindFirstChild("resource") then
+            if LP._stats.resource.Value < (unit.cost or 0) then return end
+        end
+
+        local lead, targetCp = getLeadEnemyAndTarget()
+        if not lead or not targetCp then return end
+        local anchorPos = targetCp.Position
+        if unit.type == "HILL" then
+            local nearest, dist = nil, math.huge
+            for _, part in ipairs(HillAreas) do
+                local d = (part.Position - lead.HumanoidRootPart.Position).Magnitude
+                if d < dist then
+                    dist, nearest = d, part
+                end
+            end
+            if nearest then anchorPos = nearest.Position end
+        end
+
+        local bestPos = findBestPos(anchorPos, unit.type)
+        if not bestPos then return end
+        local before = countUnits(unit.uuid)
+        RS.endpoints.client_to_server.spawn_unit:InvokeServer(
+            unit.uuid,
+            { Origin = bestPos, Direction = Vector3.new(0,-1,0) },
+            0
+        )
+        task.wait(0.5)
+        if countUnits(unit.uuid) == before then
+            table.insert(FailedFlags, bestPos)
+        end
+    end
+
+    -- Loop chính
+    task.spawn(function()
+        while task.wait(0.5) do
+            if settings.smartAutoPlace then
+                local equipped = getEquippedUnits()
+                for _, unit in ipairs(equipped) do
+                    local slotCap = (settings.placeCap and settings.placeCap[unit.slot]) or 0
+                    local maxCap = math.min(slotCap, unit.spawn_cap or 0)
+
+                    if countUnits(unit.uuid) < maxCap then
+                        autoPlace(unit, slotCap)
+                    end
+                end
+            end
+        end
+    end)
+
+    ----------------------------------------------------------------
+    -- ⚡ Auto Upgrade (ngay khi đủ tiền)
+    ----------------------------------------------------------------
+    local upgradeRemote = RS.endpoints.client_to_server:WaitForChild("upgrade_unit_ingame")
+
+    local function getSlotMap()
+        local equipped = getEquippedUnits()
+        local slotMap = {}
+        for _, u in ipairs(equipped) do
+            slotMap[u.name] = {slot = u.slot, data = u}
+        end
+        return slotMap
+    end
+
+    local function pickRandomUnit()
+        local slotMap = getSlotMap()
+        local candidates = {}
+
+        for _, m in ipairs(UnitsFolder:GetChildren()) do
+            if m:IsA("Model") and not m.Name:lower():match("^pve") then
+                local stats = m:FindFirstChild("_stats")
+                if stats 
+                    and stats:FindFirstChild("player") 
+                    and stats.player.Value == LP
+                    and stats:FindFirstChild("id") 
+                    and stats:FindFirstChild("upgrade") then
+
+                    local unitId = stats.id.Value
+                    local info = slotMap[unitId]
+                    if info then
+                        local slot = info.slot
+                        local currentUpg = stats.upgrade.Value
+                        local cap = (settings.upgradeCap and settings.upgradeCap[slot]) or 0
+                        local nextUpg = info.data.upgrades[currentUpg+1]
+
+                        if currentUpg < cap and nextUpg then
+                            local needCost = nextUpg.cost or 0
+                            local money = LP._stats.resource.Value
+                            if money >= needCost then
+                                table.insert(candidates, {
+                                    model = m,
+                                    needCost = needCost
+                                })
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        if #candidates == 0 then return nil end
+        return candidates[math.random(1, #candidates)]
+    end
+
+    task.spawn(function()
+        while task.wait(1) do
+            if settings.smartAutoUpgrade then
+                local choice = pickRandomUnit()
+                if choice then
+                    upgradeRemote:InvokeServer(choice.model.Name)
+                    task.wait(0.5)
+                end
+            end
+        end
+    end)
+end
+
 ----------------------------------------------------------------
 --=================== UI ==========================--
 ----------------------------------------------------------------
@@ -690,12 +1237,20 @@ local Window = MacLib:Window({
 local TabGroup = Window:TabGroup()
 local MainTab = TabGroup:Tab({ Name = "Main" })
 local autoJoinSection = MainTab:Section({ Side = "Left", Title = "Auto Join" })
+local portalSection   = MainTab:Section({ Side = "Left", Title = "Portal" })
 local mainSection = MainTab:Section({ Side = "Right", Title = "End Game Settings" })
 local eventSection = MainTab:Section({ Side = "Right", Title = "Event" })
+local challengeSection = MainTab:Section({ Side = "Right", Title = "Challenge" })
 local MacroTab = TabGroup:Tab({ Name = "Macro" })
 local macroSection = MacroTab:Section({ Side = "Left", Title = "Macro Settings" })
 local WebhookTab = TabGroup:Tab({ Name = "Webhook" })
 local webhookSection = WebhookTab:Section({ Side = "Left", Title = "Webhook" })
+local AutoPlayTab = TabGroup:Tab({ Name = "Auto Play" })
+local smartSection = AutoPlayTab:Section({ Side = "Left", Title = "Smart Auto Place" })
+local placeCapSection = AutoPlayTab:Section({ Side = "Right", Title = "Auto Place Cap" })
+local upgradeCapSection = AutoPlayTab:Section({ Side = "Right", Title = "Auto Upgrade Cap" })
+local MiscTab = TabGroup:Tab({ Name = "Misc" })
+local settingSection = MiscTab:Section({ Side = "Left", Title = "Setting" })
 
 -- Bảng map ứng với từng mode
 local mapOptions = {
@@ -705,7 +1260,7 @@ local mapOptions = {
     raid         = {"Sakamato"},
 }
 
--- Khai báo biến để có thể update lại dropdown map
+-- Khai báo biến để update dropdown map
 local mapDropdown
 
 -- Dropdown chọn Mode
@@ -718,44 +1273,55 @@ autoJoinSection:Dropdown({
     Callback = function(val)
         settings.autoJoinMode = val
         saveSettings(settings)
+
+        -- update dropdown Map theo mode
         local opts = mapOptions[val] or {}
         if mapDropdown then
             mapDropdown:SetDropdown(opts)
             if table.find(opts, settings.autoJoinMap) then
                 mapDropdown:SetValue(settings.autoJoinMap)
             else
+                -- reset về map đầu tiên nếu map cũ không hợp lệ
                 settings.autoJoinMap = opts[1] or ""
-                mapDropdown:SetValue(settings.autoJoinMap)
+                if settings.autoJoinMap ~= "" then
+                    mapDropdown:SetValue(settings.autoJoinMap)
+                end
                 saveSettings(settings)
             end
         end
     end
 })
 
+-- Dropdown chọn Map
 mapDropdown = autoJoinSection:Dropdown({
     Name = "Select Map",
     Multi = false,
     Required = true,
     Options = mapOptions[settings.autoJoinMode] or {},
-    Default = settings.autoJoinMap or (mapOptions[settings.autoJoinMode] and mapOptions[settings.autoJoinMode][1]) or "",
+    Default = (settings.autoJoinMap and table.find(mapOptions[settings.autoJoinMode] or {}, settings.autoJoinMap)) 
+              and settings.autoJoinMap 
+              or (mapOptions[settings.autoJoinMode] and mapOptions[settings.autoJoinMode][1]) 
+              or "",
     Callback = function(val)
         settings.autoJoinMap = val
         saveSettings(settings)
     end
 })
 
+-- Dropdown chọn Difficulty
 autoJoinSection:Dropdown({
     Name = "Select Difficulty",
     Multi = false,
     Required = true,
     Options = {"Normal","Hard"},
-    Default = settings.autoJoinDiff or "Normal",
+    Default = settings.autoJoinDiff or "Hard",
     Callback = function(val)
         settings.autoJoinDiff = val
         saveSettings(settings)
     end
 })
 
+-- Dropdown chọn Act
 autoJoinSection:Dropdown({
     Name = "Select Act",
     Multi = false,
@@ -768,20 +1334,73 @@ autoJoinSection:Dropdown({
     end
 })
 
+-- Toggle Join Map
 autoJoinSection:Toggle({
     Name = "Join Map",
     Default = settings.autoJoin or false,
     Callback = function(state)
         settings.autoJoin = state
         saveSettings(settings)
+        if state then
+            task.delay(1, RunAutoJoin) -- chạy 1 lần khi bật
+        end
     end
 })
 
+-- Toggle Find Map
 autoJoinSection:Toggle({
     Name = "Find Map",
     Default = settings.autoFind or false,
     Callback = function(state)
         settings.autoFind = state
+        saveSettings(settings)
+        if state then
+            task.delay(1, RunAutoJoin) -- chạy 1 lần khi bật
+        end
+    end
+})
+
+-- Toggle Auto Start
+autoJoinSection:Toggle({
+    Name = "Auto Start",
+    Default = settings.autoStart or false,
+    Callback = function(state)
+        settings.autoStart = state
+        saveSettings(settings)
+    end
+})
+
+-- Input Start In Seconds
+autoJoinSection:Input({
+    Name = "Start In Seconds",
+    Placeholder = "1",
+    Default = tostring(settings.startDelay or 1),
+    AcceptedCharacters = "Numeric",
+    Callback = function(val)
+        settings.startDelay = tonumber(val) or 1
+        saveSettings(settings)
+    end
+})
+
+-- Dropdown chọn Portal
+portalSection:Dropdown({
+    Name = "Select Portal",
+    Multi = false,
+    Required = true,
+    Options = {"Marine Ford Portal"},
+    Default = settings.selectedPortal or "Marine Ford Portal",
+    Callback = function(val)
+        settings.selectedPortal = val
+        saveSettings(settings)
+    end
+})
+
+-- Toggle Auto Join Portal
+portalSection:Toggle({
+    Name = "Auto Join Portal",
+    Default = settings.autoJoinPortal or false,
+    Callback = function(state)
+        settings.autoJoinPortal = state
         saveSettings(settings)
     end
 })
@@ -859,6 +1478,44 @@ eventSection:Toggle({
     Default = settings.autoFindGate or false,
     Callback = function(state)
         settings.autoFindGate = state
+        saveSettings(settings)
+    end
+})
+
+-- Multi Dropdown Ignore Challenge
+challengeSection:Dropdown({
+    Name = "Ignore Challenge",
+    Multi = true,
+    Required = false,
+    Options = {"double_cost", "short_range", "fast_enemies", "regen_enemies", "tank_enemies", "shield_enemies"},
+    Default = settings.ignoreChallenge or {},
+    Callback = function(selected)
+        -- Convert table {["double_cost"]=true,["fast_enemies"]=false,...} thành array {"double_cost",...}
+        local values = {}
+        for v, state in pairs(selected) do
+            if state then table.insert(values, v) end
+        end
+        settings.ignoreChallenge = values
+        saveSettings(settings)
+    end
+})
+
+-- Toggle Auto Join Challenge
+challengeSection:Toggle({
+    Name = "Auto Join Challenge",
+    Default = settings.autoJoinChallenge or false,
+    Callback = function(state)
+        settings.autoJoinChallenge = state
+        saveSettings(settings)
+    end
+})
+
+-- Toggle Auto Leave Challenge
+challengeSection:Toggle({
+    Name = "Auto Leave Challenge",
+    Default = settings.autoLeaveChallenge or false,
+    Callback = function(state)
+        settings.autoLeaveChallenge = state
         saveSettings(settings)
     end
 })
@@ -958,5 +1615,208 @@ webhookSection:Button({
     Name = "Test Webhook",
     Callback = function()
         sendWebhook()
+    end
+})
+
+
+local RS = game:GetService("ReplicatedStorage")
+local FX_CACHE = RS:WaitForChild("_FX_CACHE")
+local moduleCache = {}
+
+local function findModule(unitId)
+    if moduleCache[unitId] then
+        return moduleCache[unitId]
+    end
+    local Units = RS.Framework.Data.Units
+    for _, folder in ipairs(Units:GetChildren()) do
+        for _, mod in ipairs(folder:GetChildren()) do
+            if mod:IsA("ModuleScript") then
+                local ok, data = pcall(require, mod)
+                if ok and type(data) == "table" then
+                    for _, v in pairs(data) do
+                        if type(v) == "table" and v.id == unitId then
+                            moduleCache[unitId] = {
+                                raw = v,
+                                id = v.id,
+                                cost = v.cost or 0,
+                                spawn_cap = v.spawn_cap,
+                                hill_unit = v.hill_unit,
+                                upgrade = v.upgrade
+                            }
+                            return moduleCache[unitId]
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+local function getEquippedUnits()
+    local equippedList = {}
+    for _, frame in ipairs(FX_CACHE:GetChildren()) do
+        if frame:IsA("ImageButton") then
+            local equippedFlag = frame:FindFirstChild("EquippedList") 
+                and frame.EquippedList:FindFirstChild("Equipped")
+            if equippedFlag and equippedFlag.Visible then
+                local unitName = frame:GetAttribute("ITEMINDEX")
+                local uuidObj = frame:FindFirstChild("_uuid")
+                local uuid = uuidObj and uuidObj.Value
+                local data = findModule(unitName)
+                table.insert(equippedList, {
+                    name = unitName,
+                    uuid = uuid,
+                    cost = data and data.cost,
+                    type = data and (data.hill_unit and "HILL" or "GROUND") or "???",
+                    spawn_cap = data and data.spawn_cap,
+                    upgrades = data and data.upgrade or {}
+                })
+            end
+        end
+    end
+    return equippedList
+end
+
+local roadFolder
+local zoneFolder
+
+local function clearZones()
+    if zoneFolder then
+        zoneFolder:Destroy()
+        zoneFolder = nil
+    end
+end
+
+local function createRoadIfNeeded(lane)
+    if not roadFolder or not roadFolder.Parent then
+        roadFolder = Instance.new("Folder")
+        roadFolder.Name = "DebugRoad"
+        roadFolder.Parent = lane
+
+        -- (dùng code createRoad nối checkpoint như trước nhưng set Transparency=1 để ẩn)
+    end
+end
+
+local function showPlacementZone(checkpoint, units)
+    clearZones()
+    zoneFolder = Instance.new("Folder")
+    zoneFolder.Name = "PlacementZones"
+    zoneFolder.Parent = workspace
+
+    -- Vùng tròn
+    local totalCap = 0
+    for _, u in ipairs(units) do
+        totalCap += u.spawn_cap or 0
+    end
+    local radius = math.max(5, totalCap * 3)
+
+    local zone = Instance.new("Part")
+    zone.Shape = Enum.PartType.Cylinder
+    zone.Anchored = true
+    zone.CanCollide = false
+    zone.Size = Vector3.new(radius*2, 0.5, radius*2)
+    zone.CFrame = CFrame.new(Vector3.new(checkpoint.Position.X, checkpoint.Position.Y + 0.25, checkpoint.Position.Z)) * CFrame.Angles(0, math.rad(90), 0)
+    zone.Color = Color3.fromRGB(0,255,0)
+    zone.Transparency = 0.8
+    zone.Parent = zoneFolder
+
+    -- Tạo part con đại diện cho unit
+    for _, u in ipairs(units) do
+        for i = 1, u.spawn_cap or 0 do
+            local px = math.random(-radius, radius)
+            local pz = math.random(-radius, radius)
+            local pos = checkpoint.Position + Vector3.new(px, 2, pz)
+
+            local part = Instance.new("Part")
+            part.Anchored = true
+            part.CanCollide = false
+            part.Size = Vector3.new(0.5,0.5,0.5)
+            if u.type == "GROUND" then
+                part.Color = Color3.fromRGB(255,0,0)
+            else
+                part.Color = Color3.fromRGB(0,0,255)
+            end
+            part.Position = pos
+            part.Parent = zoneFolder
+        end
+    end
+end
+
+--// AUTO PLAY UI
+smartSection:Toggle({
+    Name = "Auto Place",
+    Default = settings.smartAutoPlace or false,
+    Callback = function(state)
+        settings.smartAutoPlace = state
+        saveSettings(settings)
+    end
+})
+
+smartSection:Toggle({
+    Name = "Auto Upgrade",
+    Default = settings.smartAutoUpgrade or false,
+    Callback = function(state)
+        settings.smartAutoUpgrade = state
+        saveSettings(settings)
+    end
+})
+
+-- Auto Place Cap
+for i = 1, 6 do
+    placeCapSection:Input({
+        Name = "Unit " .. i,
+        Placeholder = "",
+        Default = tostring((settings.placeCap and settings.placeCap[i]) or 4),
+        AcceptedCharacters = "Numeric",
+        Callback = function(val)
+            settings.placeCap = settings.placeCap or {}
+            settings.placeCap[i] = tonumber(val) or 0
+            saveSettings(settings)
+        end,
+    })
+end
+
+-- Auto Upgrade Cap
+for i = 1, 6 do
+    upgradeCapSection:Input({
+        Name = "Unit " .. i,
+        Placeholder = "",
+        Default = tostring((settings.upgradeCap and settings.upgradeCap[i]) or 0),
+        AcceptedCharacters = "Numeric",
+        Callback = function(val)
+            settings.upgradeCap = settings.upgradeCap or {}
+            settings.upgradeCap[i] = tonumber(val) or 0
+            saveSettings(settings)
+        end,
+    })
+end
+
+settingSection:Toggle({
+    Name = "Auto Execute",
+    Default = settings.autoExecute or false,
+    Callback = function(state)
+        settings.autoExecute = state
+        saveSettings(settings)
+
+        if state then
+            queue_on_teleport([[
+                loadstring(game:HttpGet('https://raw.githubusercontent.com/thaemmayanh/hub/refs/heads/main/AC.lua'))()
+            ]])
+        end
+    end
+})
+
+-- Toggle Smooth Map
+settingSection:Toggle({
+    Name = "Smooth Map",
+    Default = settings.smoothMap or false,
+    Callback = function(state)
+        settings.smoothMap = state
+        saveSettings(settings)
+
+        if state then
+            -- Khi bật thì load script Smooth Map
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/thaemmayanh/hub/refs/heads/main/smootth.lua"))()
+        end
     end
 })
