@@ -82,7 +82,8 @@ local function loadSettings()
             end
         end
     end
-    return {} -- nếu chưa có gì thì trả bảng rỗng
+    writefile(path, HttpService:JSONEncode(defaultSettings))
+    return table.clone(defaultSettings)
 end
 
 local function saveSettings(tbl)
