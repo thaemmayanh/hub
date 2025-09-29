@@ -49,16 +49,7 @@ pcall(function()
     if WS:FindFirstChild("_FX_CACHE") then WS._FX_CACHE:ClearAllChildren() end
 end)
 
--- Giữ ánh sáng cơ bản
-for _, v in ipairs(Lighting:GetChildren()) do
-    if v:IsA("Sky") or v:IsA("Atmosphere") or v:IsA("ColorCorrectionEffect") then
-        -- giữ
-    else
-        v:Destroy()
-    end
-end
-
--- Chỉnh Lighting nhẹ
+-- 🔆 Chỉnh Lighting (KHÔNG xoá child để tránh bug GUI game)
 Lighting.Brightness = 2
 Lighting.GlobalShadows = false
 Lighting.FogEnd = 1e9
