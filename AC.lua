@@ -70,12 +70,19 @@ local defaultSettings = {
 
 -- Hàm load/save settings
 local function loadSettings()
-    if isfile(folderName.."/"..fileName) then
-        return HttpService:JSONDecode(readfile(folderName.."/"..fileName))
-    else
-        writefile(folderName.."/"..fileName, HttpService:JSONEncode(defaultSettings))
-        return table.clone(defaultSettings)
+    local path = folderName.."/"..fileName
+    if isfile(path) then
+        local content = readfile(path)
+        if content and content ~= "" then
+            local ok, data = pcall(function()
+                return HttpService:JSONDecode(content)
+            end)
+            if ok and type(data) == "table" then
+                return data
+            end
+        end
     end
+    return {} -- nếu chưa có gì thì trả bảng rỗng
 end
 
 local function saveSettings(tbl)
