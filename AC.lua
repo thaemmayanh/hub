@@ -370,35 +370,35 @@ end
 ----------------------------------------------------------------
 -- 🏃 Auto Leave Challenge
 ----------------------------------------------------------------
-local function RunAutoJoinChallenge()
-    if game.PlaceId ~= 107573139811370 then return false end
-    if not settings.autoJoinChallenge then return false end
+----------------------------------------------------------------
+-- 🏃 Auto Leave Challenge (loop riêng)
+----------------------------------------------------------------
+local function RunAutoLeaveChallenge()
+    if not settings.autoLeaveChallenge then return end
+    if game.PlaceId == 107573139811370 then return end -- không chạy nếu đang ở lobby
 
-    local challengeVal = workspace:WaitForChild("_CHALLENGES")
-        :WaitForChild("Challenges")
-        :WaitForChild("ChallengePod5")
-        :WaitForChild("Challenge").Value
+    task.spawn(function()
+        local now = os.date("*t")
+        local targetMinute = 0
+        local targetHour = now.min > 0 and now.hour + 1 or now.hour
 
-    if table.find(settings.ignoreChallenge or {}, challengeVal) then
-        warn("[CHALLENGE] Ignored:", challengeVal)
-        return false
-    end
+        repeat
+            task.wait(10)
+            now = os.date("*t")
+        until now.hour == targetHour and now.min == targetMinute
 
-    local args = {"ChallengePod5"}
-    game:GetService("ReplicatedStorage")
-        :WaitForChild("endpoints")
-        :WaitForChild("client_to_server")
-        :WaitForChild("request_join_lobby")
-        :InvokeServer(unpack(args))
-
-    if settings.autoStart then
-        task.delay(1, function()
-            SafeStart("ChallengePod5")
-        end)
-    end
-
-    return true
+        game:GetService("TeleportService"):Teleport(107573139811370, LocalPlayer)
+    end)
 end
+
+-- 🔁 Loop check auto leave
+task.spawn(function()
+    while task.wait(5) do
+        if settings.autoLeaveChallenge then
+            RunAutoLeaveChallenge()
+        end
+    end
+end)
 
 ----------------------------------------------------------------
 -- 🌐 RunAuto: gom tất cả auto join
